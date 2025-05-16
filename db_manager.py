@@ -19,6 +19,7 @@ class DBManager:
     def __init__(self, db_path: str = "model_registry.db"):
         rel_db_path = os.path.relpath(db_path, PROJECT_ROOT)
         self.conn = sqlite3.connect(rel_db_path, check_same_thread=False)
+        self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.row_factory = sqlite3.Row
         self._create_tables()
 

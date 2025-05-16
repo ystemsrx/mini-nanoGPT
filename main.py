@@ -1635,10 +1635,7 @@ def build_app_interface(selected_lang: str = "zh"):
                     pass
                     
             new_choices = _model_choices()
-            # 优雅处理：如果没有选项了，返回None而不是空字符串
-            new_value = None if not new_choices else ""
-            
-            return gr.update(choices=new_choices, value=new_value), *_reset_updates()
+            return gr.update(choices=new_choices, value=None), *_reset_updates()
 
         delete_model_btn.click(
             fn=delete_model_cb,
