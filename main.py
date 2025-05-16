@@ -1633,7 +1633,12 @@ def build_app_interface(selected_lang: str = "zh"):
                     dbm.delete_model(int(sel.split(" - ")[0]))
                 except Exception:
                     pass
-            return gr.update(choices=_model_choices(), value=""), *_reset_updates()
+                    
+            new_choices = _model_choices()
+            # 优雅处理：如果没有选项了，返回None而不是空字符串
+            new_value = None if not new_choices else ""
+            
+            return gr.update(choices=new_choices, value=new_value), *_reset_updates()
 
         delete_model_btn.click(
             fn=delete_model_cb,
