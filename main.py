@@ -1397,6 +1397,10 @@ def build_app_interface(selected_lang: str = "zh"):
             sp, no_val, use_gpt2_tokenizer, num_proc_
         ):
             try:
+                # Get current language
+                current_lang = lang_select.value
+                T_current = LANG_JSON[current_lang]
+                
                 sel_id = int(dropdown_val.split(" - ")[0]) if dropdown_val and " - " in dropdown_val else None
                 info = process_data(
                     model_name=model_name.strip() or "unnamed",
@@ -1412,7 +1416,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 new_choices = _model_choices()
                 new_val     = f"{info['model_id']} - {model_name.strip() or 'unnamed'}"
                 msg = (
-                    f"✅ {T['dp_result']}:\n"
+                    f"✅ {T_current['dp_result']}:\n"  # Use current langeuage
                     f"model_id = {info['model_id']}\n"
                     f"processed_dir = {info['processed_data_dir']}\n"
                     f"vocab_size = {info['vocab_size']}\n"
