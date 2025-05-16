@@ -70,27 +70,66 @@ class DBManager:
     # ------------------------------------------------------------------ #
     def register_model(self, name: str, dir_path: Optional[str] = None) -> int:
         """
-        若 dir_path=None，则自动创建 ./out/{name}_{id}/ 并持久化相对路径。
-        返回模型唯一 id（毫秒级时间戳）。
+        注册一个新模型，或在已存在时返回其 id。
+
+        核心修复点
+        -----------
+        1. **统一时间戳**  
+           过去版本在为目录名和 id 取时间戳时各调用了一次 `time.time()`，  
+           造成两者不一致，引发 “目录名 ≠ id” 的一系列连锁问题。  
+           现在改为 **只取一次时间戳**，同时作为：
+               · 目录名后缀（如：out/foobar_1747405262784/）
+               · 数据库主键 id  
+           保证目录结构、id、UI 计算始终一致。
+
+        2. **目录已存在时直接返回 id**  
+           若传入的 `dir_path` 已经注册过，直接返回对应 id，  
+           **不再尝试更新 name**，避免名字被误改为
+           “test_1747405262784” 之类带 id 的长串。
+
+        参数
+        ----
+        name : 模型显示名称（UI 可见）
+        dir_path : 可选。若不给，则按规则自动生成
+                   ./out/{name}_{id}/ 目录并注册。
+        返回值
+        ------
+        int : 唯一模型 id（同时也是目录名后缀）
         """
         cur = self.conn.cursor()
 
-        if dir_path:                               # 若提供目录，检查是否已存在
-            rel = self._rel(dir_path)
-            cur.execute("SELECT id FROM models WHERE dir_path = ?", (rel,))
+        # ---------- 情况 1：给定目录，检查是否已注册 ----------
+        if dir_path:
+            rel_path = self._rel(dir_path)
+            cur.execute("SELECT id FROM models WHERE dir_path = ?", (rel_path,))
             row = cur.fetchone()
-            if row:
+            if row:                        # 已注册 → 直接返回 id
                 return row["id"]
-            dir_path_rel = rel
-        else:                                      # 自动生成目录
-            ts_ms_tmp = int(time.time() * 1000)
-            auto_folder = f"{name}_{ts_ms_tmp}"
-            dir_path_rel = self._rel(os.path.join("out", auto_folder))
-            os.makedirs(self._abs(dir_path_rel), exist_ok=True)
 
-        ts_ms = int(time.time() * 1000)
+            # 未注册 → 确保目录存在，再继续走新建流程
+            abs_path = self._abs(rel_path)
+            if not os.path.exists(abs_path):
+                os.makedirs(abs_path, exist_ok=True)
+
+            # 统一时间戳：既作目录名后缀，又作 id
+            ts_ms = int(time.time() * 1000)
+            cur.execute(
+                "INSERT INTO models(id, name, dir_path, created_at) "
+                "VALUES(?,?,?,datetime('now'))",
+                (ts_ms, name, rel_path)
+            )
+            self.conn.commit()
+            return ts_ms
+
+        # ---------- 情况 2：未给目录，自动生成 ----------
+        ts_ms = int(time.time() * 1000)          # *一次* 时间戳
+        auto_folder = f"{name}_{ts_ms}"
+        dir_path_rel = self._rel(os.path.join("out", auto_folder))
+        os.makedirs(self._abs(dir_path_rel), exist_ok=True)
+
         cur.execute(
-            "INSERT INTO models(id, name, dir_path, created_at) VALUES(?,?,?,datetime('now'))",
+            "INSERT INTO models(id, name, dir_path, created_at) "
+            "VALUES(?,?,?,datetime('now'))",
             (ts_ms, name, dir_path_rel)
         )
         self.conn.commit()
