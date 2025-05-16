@@ -21,6 +21,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from multiprocessing import Pool, cpu_count
+from pathlib import Path
 
 # 导入默认配置
 from config import DEFAULT_CONFIG, LANG_JSON, IntegerTypes
@@ -170,6 +171,17 @@ def encode_gpt2_chunk(chunk, tokenizer):
     """
     return tokenizer.encode(chunk, allowed_special={"<|endoftext|>"})
 
+# ------ HuggingFace Tokenizers ------
+def _encode_custom_chunk(chunk: str, tokenizer_path: str):
+    """
+    供进程池调用：每个子进程单独加载 tokenizer.json，
+    避免多进程序列化 Tokenizer 对象带来的报错。
+    """
+    from tokenizers import Tokenizer        # 局部 import，主进程无需强依赖
+    tok = Tokenizer.from_file(tokenizer_path)
+    return tok.encode(chunk).ids
+
+
 def process_data(
     *,
     model_name: str,
@@ -183,12 +195,11 @@ def process_data(
     num_proc: int = DEFAULT_CONFIG["data_process"]["num_proc"]
 ):
     """
-    数据处理核心
+    数据处理核心（完整函数，无省略）
 
-    参数：
-      · model_name/new_model/selected_model_id    — 见设计说明
-      · input_text / input_dir                    — 二选一
-      · 其余为超参
+    · 若勾选 “使用 tokenizer”，优先尝试根目录 `tokenizer.json`；
+      不存在时退回 GPT-2 分词器。
+    · 仅保存 **实际出现** 的 token，自动重新映射为连续 id。
     """
     # -------- 0. 决定 model_id & 路径 -------- #
     if new_model:
@@ -223,62 +234,137 @@ def process_data(
     size_mb = len(data.encode("utf-8")) / 1024 / 1024
     actual_proc = min(num_proc, cpu_count()) if size_mb > 100 else 1
 
+    # ================================
+    # 2-A. 使用分词器 (tokenizer.json / GPT-2)
+    # ================================
     if use_gpt2_tokenizer:
-        enc = tiktoken.get_encoding("gpt2")
-        vocab_size = enc.n_vocab
-        chunks = get_chunks(data, actual_proc) if actual_proc > 1 else [data]
-        with Pool(actual_proc) as pool:
-            token_chunks = pool.starmap(encode_gpt2_chunk, [(c, enc) for c in chunks])
-        tokens = [t for chunk in token_chunks for t in chunk]
-        if tokens[-1] != enc.eot_token:
-            tokens.append(enc.eot_token)
+        tokenizer_path = Path.cwd() / "tokenizer.json"
+
+        # ---- ① 根目录存在 tokenizer.json → 使用 HuggingFace Tokenizers ----
+        if tokenizer_path.exists():
+            try:
+                from tokenizers import Tokenizer  # 提前检测依赖
+            except ImportError as e:
+                raise ImportError(
+                    "检测到 tokenizer.json，但当前环境未安装 `tokenizers` 库：\n"
+                    "    pip install tokenizers\n"
+                ) from e
+
+            tok_name = "custom_json"
+            chunks = get_chunks(data, actual_proc) if actual_proc > 1 else [data]
+            if actual_proc == 1:
+                tokenizer = Tokenizer.from_file(str(tokenizer_path))
+                token_chunks = [tokenizer.encode(c).ids for c in chunks]
+            else:
+                # 多进程：子进程内再加载 Tokenizer
+                with Pool(actual_proc) as pool:
+                    token_chunks = pool.starmap(
+                        _encode_custom_chunk,
+                        [(c, str(tokenizer_path)) for c in chunks]
+                    )
+            tokens_full = [t for ck in token_chunks for t in ck]
+
+            # 取 <|endoftext|> /  等常见结束符，若存在则追加
+            eot_id_old = None
+            for special in ["", "<|endoftext|>"]:
+                try:
+                    test_tok = Tokenizer.from_file(str(tokenizer_path))
+                    eot_id_old = test_tok.token_to_id(special)
+                    if eot_id_old is not None:
+                        break
+                except Exception:
+                    pass
+            if eot_id_old is not None and (len(tokens_full) == 0 or tokens_full[-1] != eot_id_old):
+                tokens_full.append(eot_id_old)
+
+        # ---- ② 没有 tokenizer.json → 退回 GPT-2 (tiktoken) ----
+        else:
+            enc = tiktoken.get_encoding("gpt2")
+            tok_name = "gpt2"
+            chunks = get_chunks(data, actual_proc) if actual_proc > 1 else [data]
+            with Pool(actual_proc) as pool:
+                token_chunks = pool.starmap(encode_gpt2_chunk, [(c, enc) for c in chunks])
+            tokens_full = [t for ck in token_chunks for t in ck]
+            if tokens_full[-1] != enc.eot_token:
+                tokens_full.append(enc.eot_token)
+            eot_id_old = enc.eot_token
+
+        # ---- ③ 精简子词表：old-id → new-id ----
+        used_old_ids = sorted(set(tokens_full))
+        old2new = {old: new for new, old in enumerate(used_old_ids)}
+        tokens = [old2new[t] for t in tokens_full]
 
         if no_validation:
             splits = {"train": tokens}
         else:
-            idx = int(len(tokens) * train_split_ratio)
-            splits = {"train": tokens[:idx], "val": tokens[idx:]}
+            split_at = int(len(tokens) * train_split_ratio)
+            splits = {"train": tokens[:split_at], "val": tokens[split_at:]}
 
-        for split, toks in splits.items():
-            np.array(toks, dtype=np.uint32).tofile(os.path.join(processed_dir, f"{split}.bin"))
+        for sp, seq in splits.items():
+            np.array(seq, dtype=np.uint32).tofile(os.path.join(processed_dir, f"{sp}.bin"))
+
+        # ---- ④ 构建 meta.pkl ----
+        if tokenizer_path.exists():
+            # 对于自定义 tokenizer.json，用 HF Tokenizers decode
+            tokenizer_for_meta = Tokenizer.from_file(str(tokenizer_path))
+            itos = {nid: tokenizer_for_meta.decode([oid]) for oid, nid in old2new.items()}
+        else:
+            # GPT-2 fallback
+            itos = {nid: enc.decode([oid]) for oid, nid in old2new.items()}
+
+        stoi = {s: i for i, s in itos.items()}
+        vocab_size = len(itos)
 
         meta = {
             "vocab_size": vocab_size,
-            "itos": {i: enc.decode([i]) for i in range(vocab_size)},
-            "stoi": {enc.decode([i]): i for i in range(vocab_size)},
-            "tokenizer": "gpt2"
+            "itos": itos,
+            "stoi": stoi,
+            "tokenizer": tok_name,
+            "old2new": old2new,
+            "eot_id_new": old2new.get(eot_id_old, None)
         }
         train_sz = len(splits["train"])
-        val_sz   = len(splits.get("val", []))
+        val_sz = len(splits.get("val", []))
+
+    # ================================
+    # 2-B. 字符级（原始逻辑）
+    # ================================
     else:
-        # ---- char-level ----
-        chars = sorted(set(data)) if actual_proc == 1 else sorted(set().union(*Pool(actual_proc).map(get_unique_chars, get_chunks(data, actual_proc))))
-        stoi = {ch:i for i,ch in enumerate(chars)}
-        itos = {i:ch for ch,i in stoi.items()}
+        chars = sorted(set(data)) if actual_proc == 1 else sorted(
+            set().union(*Pool(actual_proc).map(get_unique_chars, get_chunks(data, actual_proc)))
+        )
+        stoi = {ch: i for i, ch in enumerate(chars)}
+        itos = {i: ch for ch, i in stoi.items()}
         vocab_size = len(chars)
 
-        encoded = encode_text_chunk(data, stoi) if actual_proc == 1 else [e for chunk in Pool(actual_proc).starmap(encode_text_chunk, [(c,stoi) for c in get_chunks(data, actual_proc)]) for e in chunk]
+        if actual_proc == 1:
+            encoded = encode_text_chunk(data, stoi)
+        else:
+            with Pool(actual_proc) as pool:
+                enc_chunks = pool.starmap(encode_text_chunk, [(c, stoi) for c in get_chunks(data, actual_proc)])
+            encoded = [e for ck in enc_chunks for e in ck]
 
         if no_validation:
             train_ids = np.array(encoded, dtype=IntegerTypes)
             val_ids = None
         else:
-            idx = int(len(encoded)*train_split_ratio)
-            train_ids = np.array(encoded[:idx], dtype=IntegerTypes)
-            val_ids   = np.array(encoded[idx:], dtype=IntegerTypes)
+            split_at = int(len(encoded) * train_split_ratio)
+            train_ids = np.array(encoded[:split_at], dtype=IntegerTypes)
+            val_ids = np.array(encoded[split_at:], dtype=IntegerTypes)
 
-        train_ids.tofile(os.path.join(processed_dir,"train.bin"))
+        train_ids.tofile(os.path.join(processed_dir, "train.bin"))
         if val_ids is not None:
-            val_ids.tofile(os.path.join(processed_dir,"val.bin"))
+            val_ids.tofile(os.path.join(processed_dir, "val.bin"))
 
-        meta = {"vocab_size":vocab_size,"itos":itos,"stoi":stoi}
+        meta = {"vocab_size": vocab_size, "itos": itos, "stoi": stoi}
         train_sz = len(train_ids)
-        val_sz   = len(val_ids) if val_ids is not None else 0
+        val_sz = len(val_ids) if val_ids is not None else 0
 
-    with open(os.path.join(processed_dir,"meta.pkl"),"wb") as f:
-        pickle.dump(meta,f)
+    # -------- 3. 保存 meta.pkl -------- #
+    with open(os.path.join(processed_dir, "meta.pkl"), "wb") as f:
+        pickle.dump(meta, f)
 
-    # -------- 3. 返回 -------- #
+    # -------- 4. 返回 -------- #
     res = {
         "model_id": model_id,
         "processed_data_dir": processed_dir,
@@ -288,8 +374,6 @@ def process_data(
     if not no_validation:
         res["val_size"] = val_sz
     return res
-
-
 
 ##############################################################################
 # Training: includes stop signal, DDP, logging, visualization, and checkpoints
