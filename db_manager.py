@@ -3,20 +3,23 @@
 import os, sqlite3, json, time, shutil
 from typing import Optional
 
-PROJECT_ROOT = os.path.abspath(os.getcwd())  # 项目根目录（绝对）
+PROJECT_ROOT = os.path.abspath(os.getcwd())  # Project root directory (absolute path)
 
 class DBManager:
     """
-    统一的 SQLite 管理器：
-      · register_model            – dir_path 可选，若缺省则自动 ./out/{name}_{id}/
-      · rename_model              – 同步重命名 ./data 与 ./out 目录
-      · delete_model              – 同步删除 ./data 与 ./out 目录
-      · get_model_basic_info      – 返回 {'name','dir_path'}
+    Unified SQLite Manager:
+      - register_model: Optional dir_path. If omitted, automatically creates ./out/{name}_{id}/
+      - rename_model: Synchronously rename both ./data and ./out directories
+      - delete_model: Synchronously delete both ./data and ./out directories
+      - get_model_basic_info: Returns {'name', 'dir_path'}
     """
     # ------------------------------------------------------------------ #
-    # 初始化 & 建表
+    # Initialization & Table Creation
     # ------------------------------------------------------------------ #
     def __init__(self, db_path: str = "model_registry.db"):
+        """
+        Initialize the database connection and ensure all tables exist.
+        """
         rel_db_path = os.path.relpath(db_path, PROJECT_ROOT)
         self.conn = sqlite3.connect(rel_db_path, check_same_thread=False)
         self.conn.execute("PRAGMA foreign_keys = ON")
@@ -24,6 +27,10 @@ class DBManager:
         self._create_tables()
 
     def _create_tables(self):
+        """
+        Create tables for models, training configs, training logs,
+        inference configs, and inference history if they do not exist.
+        """
         cur = self.conn.cursor()
         cur.executescript(
             """
@@ -58,61 +65,68 @@ class DBManager:
         self.conn.commit()
 
     # ------------------------------------------------------------------ #
-    # 内部路径工具
+    # Internal Path Utilities
     # ------------------------------------------------------------------ #
     def _rel(self, path: str) -> str:
+        """
+        Convert an absolute path to a path relative to the project root.
+        """
         return os.path.relpath(path, PROJECT_ROOT)
 
     def _abs(self, rel_path: str) -> str:
+        """
+        Convert a relative path (from project root) to an absolute path.
+        """
         return os.path.join(PROJECT_ROOT, rel_path) if rel_path else ""
 
     # ------------------------------------------------------------------ #
-    # 模型注册 / 基础信息
+    # Model Registration & Basic Info
     # ------------------------------------------------------------------ #
     def register_model(self, name: str, dir_path: Optional[str] = None) -> int:
         """
-        注册一个新模型，或在已存在时返回其 id。
+        Register a new model or return its ID if it already exists.
 
-        核心修复点
-        -----------
-        1. **统一时间戳**  
-           过去版本在为目录名和 id 取时间戳时各调用了一次 `time.time()`，  
-           造成两者不一致，引发 “目录名 ≠ id” 的一系列连锁问题。  
-           现在改为 **只取一次时间戳**，同时作为：
-               · 目录名后缀（如：out/foobar_1747405262784/）
-               · 数据库主键 id  
-           保证目录结构、id、UI 计算始终一致。
+        Key Fixes:
+        1. Unified Timestamp:
+           Previous versions called `time.time()` separately for
+           directory name and ID, causing inconsistency between
+           directory names and IDs. Now a single timestamp is
+           used for both:
+             - Directory suffix (e.g., out/foobar_1747405262784/)
+             - Database primary key ID
+           Ensures consistency across directory structure, IDs, and UI.
 
-        2. **目录已存在时直接返回 id**  
-           若传入的 `dir_path` 已经注册过，直接返回对应 id，  
-           **不再尝试更新 name**，避免名字被误改为
-           “test_1747405262784” 之类带 id 的长串。
+        2. Existing Directory Handling:
+           If the provided `dir_path` is already registered,
+           return its ID directly and do not attempt to update
+           its name, avoiding unintended renaming to long
+           strings like “test_1747405262784”.
 
-        参数
-        ----
-        name : 模型显示名称（UI 可见）
-        dir_path : 可选。若不给，则按规则自动生成
-                   ./out/{name}_{id}/ 目录并注册。
-        返回值
-        ------
-        int : 唯一模型 id（同时也是目录名后缀）
+        Parameters:
+        name: Display name for the model (visible in UI)
+        dir_path: Optional. If not provided, automatically generates
+                  ./out/{name}_{id}/ and registers it.
+
+        Returns:
+        int: Unique model ID (also used as the directory suffix)
         """
         cur = self.conn.cursor()
 
-        # ---------- 情况 1：给定目录，检查是否已注册 ----------
+        # ----- Case 1: Provided directory, check if already registered -----
         if dir_path:
             rel_path = self._rel(dir_path)
             cur.execute("SELECT id FROM models WHERE dir_path = ?", (rel_path,))
             row = cur.fetchone()
-            if row:                        # 已注册 → 直接返回 id
+            if row:
+                # Already registered: return existing ID
                 return row["id"]
 
-            # 未注册 → 确保目录存在，再继续走新建流程
+            # Not registered: ensure directory exists then proceed
             abs_path = self._abs(rel_path)
             if not os.path.exists(abs_path):
                 os.makedirs(abs_path, exist_ok=True)
 
-            # 统一时间戳：既作目录名后缀，又作 id
+            # Unified timestamp: used for both directory suffix and ID
             ts_ms = int(time.time() * 1000)
             cur.execute(
                 "INSERT INTO models(id, name, dir_path, created_at) "
@@ -122,8 +136,8 @@ class DBManager:
             self.conn.commit()
             return ts_ms
 
-        # ---------- 情况 2：未给目录，自动生成 ----------
-        ts_ms = int(time.time() * 1000)          # *一次* 时间戳
+        # ----- Case 2: No directory provided, auto-generate -----
+        ts_ms = int(time.time() * 1000)
         auto_folder = f"{name}_{ts_ms}"
         dir_path_rel = self._rel(os.path.join("out", auto_folder))
         os.makedirs(self._abs(dir_path_rel), exist_ok=True)
@@ -137,6 +151,9 @@ class DBManager:
         return ts_ms
     
     def get_model_id_by_dir(self, dir_path: str) -> Optional[int]:
+        """
+        Retrieve the model ID based on its directory path.
+        """
         dir_path_rel = self._rel(dir_path)
         cur = self.conn.cursor()
         cur.execute("SELECT id FROM models WHERE dir_path = ?", (dir_path_rel,))
@@ -144,6 +161,9 @@ class DBManager:
         return row["id"] if row else None
     
     def get_model_basic_info(self, model_id: int) -> Optional[dict]:
+        """
+        Return basic information for a model, including its name and directory path.
+        """
         cur = self.conn.cursor()
         cur.execute("SELECT name, dir_path FROM models WHERE id = ?", (model_id,))
         row = cur.fetchone()
@@ -151,14 +171,14 @@ class DBManager:
 
     def rename_model(self, model_id: int, new_name: str):
         """
-        · 更新数据库 name / dir_path
-        · 同步重命名 ./data/{old} 与 ./out/{old}
+        - Update the model's name and directory path in the database.
+        - Synchronously rename both ./data/{old} and ./out/{old} directories.
         """
         info = self.get_model_basic_info(model_id)
         if not info:
-            raise ValueError(f"Model {model_id} 不存在。")
+            raise ValueError(f"Model {model_id} does not exist.")
 
-        old_folder = os.path.basename(info["dir_path"])           # oldName_id
+        old_folder = os.path.basename(info["dir_path"])
         new_folder = f"{new_name}_{model_id}"
 
         old_out_abs = self._abs(info["dir_path"])
@@ -179,8 +199,7 @@ class DBManager:
         self.conn.commit()
 
     # ------------------------------------------------------------------ #
-    # 训练 / 推理 配置 & 日志 & 历史（未改动，保持原实现）
-    #   ↓↓↓  —— 以下方法完整保留，无任何修改 —— ↓↓↓
+    # Training & Inference Configs, Logs & History
     # ------------------------------------------------------------------ #
 
     def save_training_config(self, model_id: int, cfg: dict):
@@ -224,40 +243,58 @@ class DBManager:
         self.conn.commit()
 
     def clear_inference_history(self, model_id: int):
+        """
+        Delete all inference history entries for the given model.
+        """
         self.conn.execute("DELETE FROM inference_history WHERE model_id = ?", (model_id,))
         self.conn.commit()
 
     def get_training_config(self, model_id: int):
+        """
+        Retrieve the training configuration JSON for the given model.
+        """
         cur = self.conn.cursor()
         cur.execute("SELECT config_json FROM training_configs WHERE model_id = ?", (model_id,))
         row = cur.fetchone()
         return json.loads(row["config_json"]) if row else None
 
     def get_training_log_path(self, model_id: int):
+        """
+        Retrieve the absolute path to the training log file for the given model.
+        """
         cur = self.conn.cursor()
         cur.execute("SELECT log_path FROM training_logs WHERE model_id = ?", (model_id,))
         row = cur.fetchone()
         return self._abs(row["log_path"]) if row else ""
 
     def get_inference_config(self, model_id: int):
+        """
+        Retrieve the inference configuration JSON for the given model.
+        """
         cur = self.conn.cursor()
         cur.execute("SELECT config_json FROM inference_configs WHERE model_id = ?", (model_id,))
         row = cur.fetchone()
         return json.loads(row["config_json"]) if row else None
 
     def get_inference_history(self, model_id: int):
+        """
+        Retrieve the last inference history content for the given model.
+        """
         cur = self.conn.cursor()
         cur.execute("SELECT content FROM inference_history WHERE model_id = ?", (model_id,))
         row = cur.fetchone()
         return row["content"] if row else ""
 
     # ------------------------------------------------------------------ #
-    # 删除模型（级联删文件 + DB）
+    # Delete Model (cascade delete files & DB entries)
     # ------------------------------------------------------------------ #
     def delete_model(self, model_id: int):
+        """
+        Delete the model record and remove associated folders from disk.
+        """
         info = self.get_model_basic_info(model_id)
         if info:
-            folder = os.path.basename(info["dir_path"])          # name_id
+            folder = os.path.basename(info["dir_path"])
             for p in (os.path.join("data", folder), self._abs(info["dir_path"])):
                 if os.path.exists(p):
                     shutil.rmtree(p, ignore_errors=True)
@@ -266,9 +303,12 @@ class DBManager:
         self.conn.commit()
 
     # ------------------------------------------------------------------ #
-    # 列表
+    # List All Models
     # ------------------------------------------------------------------ #
     def get_all_models(self):
+        """
+        Return a list of all models ordered by creation time descending.
+        """
         cur = self.conn.cursor()
         cur.execute("SELECT id, name FROM models ORDER BY created_at DESC")
         return [dict(row) for row in cur.fetchall()]

@@ -8,10 +8,10 @@ else:
     selected_device = "cpu"
 
 
-# 整数类型定义
+# Define the data type.
 IntegerTypes = np.uint32
 
-# 默认配置
+# Define default configuration values.
 DEFAULT_CONFIG = {
     "data_process": {
         "train_split_ratio": 0.9,
@@ -67,7 +67,7 @@ DEFAULT_CONFIG = {
     }
 }
 
-# 多语言字典
+# Multilingual support
 LANG_JSON = {
     "en": {
         "app_title": "Mini Nano GPT",

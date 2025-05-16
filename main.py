@@ -23,30 +23,26 @@ import matplotlib.pyplot as plt
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
 
-# 导入默认配置
+# Defalt Config
 from config import DEFAULT_CONFIG, LANG_JSON, IntegerTypes
 from db_manager import DBManager
 dbm = DBManager()
 
 def compose_model_dirs(model_name: str, model_id: int):
     """
-    根据模型名与唯一 id 生成：
+    Generate model directories:
         · raw_data_dir   : ./data/{model_name}_{id}/raw/
         · processed_dir  : ./data/{model_name}_{id}/processed/
         · out_dir        : ./out/{model_name}_{id}/
-    返回 (raw_data_dir, processed_data_dir, out_dir)
+    Return (raw_data_dir, processed_data_dir, out_dir)
     """
     folder = f"{model_name}_{model_id}"
     raw_data_dir = os.path.join("data", folder, "raw")
     processed_data_dir = os.path.join("data", folder, "processed")
     out_dir = os.path.join("out", folder)
     return raw_data_dir, processed_data_dir, out_dir
-# ---------------------------------------------------------------- #
 
-
-##############################################################################
-# GPT Model
-##############################################################################
+# ------------------------ GPT Model -----------------------------#
 
 class GPTConfig:
     def __init__(
@@ -174,8 +170,7 @@ def encode_gpt2_chunk(chunk, tokenizer):
 # ------ HuggingFace Tokenizers ------
 def _encode_custom_chunk(chunk: str, tokenizer_path: str):
     """
-    供进程池调用：每个子进程单独加载 tokenizer.json，
-    避免多进程序列化 Tokenizer 对象带来的报错。
+    Load local tokenizer.json and encode a chunk of text.
     """
     from tokenizers import Tokenizer        # 局部 import，主进程无需强依赖
     tok = Tokenizer.from_file(tokenizer_path)
@@ -195,11 +190,9 @@ def process_data(
     num_proc: int = DEFAULT_CONFIG["data_process"]["num_proc"]
 ):
     """
-    数据处理核心（完整函数，无省略）
-
-    · 若勾选 “使用 tokenizer”，优先尝试根目录 `tokenizer.json`；
-      不存在时退回 GPT-2 分词器。
-    · 仅保存 **实际出现** 的 token，自动重新映射为连续 id。
+    - If "Use tokenizer" is checked, it will first attempt to use `tokenizer.json` in the root directory;
+      if it does not exist, it will fall back to the GPT-2 tokenizer.
+    - Only **actually occurring** tokens are saved, and they are automatically remapped to consecutive IDs.
     """
     # -------- 0. 决定 model_id & 路径 -------- #
     if new_model:
@@ -246,7 +239,7 @@ def process_data(
                 from tokenizers import Tokenizer  # 提前检测依赖
             except ImportError as e:
                 raise ImportError(
-                    "检测到 tokenizer.json，但当前环境未安装 `tokenizers` 库：\n"
+                    "Detected tokenizer.json, but the `tokenizers` library is not installed in the current environment:\n"
                     "    pip install tokenizers\n"
                 ) from e
 
@@ -256,7 +249,7 @@ def process_data(
                 tokenizer = Tokenizer.from_file(str(tokenizer_path))
                 token_chunks = [tokenizer.encode(c).ids for c in chunks]
             else:
-                # 多进程：子进程内再加载 Tokenizer
+                # Multi-process: Load Tokenizer in child processes
                 with Pool(actual_proc) as pool:
                     token_chunks = pool.starmap(
                         _encode_custom_chunk,
@@ -264,7 +257,7 @@ def process_data(
                     )
             tokens_full = [t for ck in token_chunks for t in ck]
 
-            # 取 <|endoftext|> /  等常见结束符，若存在则追加
+            # Append <|endoftext|> or other common end tokens if they exist
             eot_id_old = None
             for special in ["", "<|endoftext|>"]:
                 try:
@@ -277,7 +270,7 @@ def process_data(
             if eot_id_old is not None and (len(tokens_full) == 0 or tokens_full[-1] != eot_id_old):
                 tokens_full.append(eot_id_old)
 
-        # ---- ② 没有 tokenizer.json → 退回 GPT-2 (tiktoken) ----
+        # ---- ② No tokenizer.json → Fallback to GPT-2 (tiktoken) ----
         else:
             enc = tiktoken.get_encoding("gpt2")
             tok_name = "gpt2"
@@ -289,7 +282,7 @@ def process_data(
                 tokens_full.append(enc.eot_token)
             eot_id_old = enc.eot_token
 
-        # ---- ③ 精简子词表：old-id → new-id ----
+        # ---- ③ Simplify the subword vocabulary: old-id → new-id ----
         used_old_ids = sorted(set(tokens_full))
         old2new = {old: new for new, old in enumerate(used_old_ids)}
         tokens = [old2new[t] for t in tokens_full]
@@ -303,9 +296,9 @@ def process_data(
         for sp, seq in splits.items():
             np.array(seq, dtype=np.uint32).tofile(os.path.join(processed_dir, f"{sp}.bin"))
 
-        # ---- ④ 构建 meta.pkl ----
+        # ---- ④ Build meta.pkl ----
         if tokenizer_path.exists():
-            # 对于自定义 tokenizer.json，用 HF Tokenizers decode
+            # For custom tokenizer.json，use HF Tokenizers decode
             tokenizer_for_meta = Tokenizer.from_file(str(tokenizer_path))
             itos = {nid: tokenizer_for_meta.decode([oid]) for oid, nid in old2new.items()}
         else:
@@ -327,7 +320,7 @@ def process_data(
         val_sz = len(splits.get("val", []))
 
     # ================================
-    # 2-B. 字符级（原始逻辑）
+    # 2-B. Character-level encoding
     # ================================
     else:
         chars = sorted(set(data)) if actual_proc == 1 else sorted(
@@ -360,11 +353,11 @@ def process_data(
         train_sz = len(train_ids)
         val_sz = len(val_ids) if val_ids is not None else 0
 
-    # -------- 3. 保存 meta.pkl -------- #
+    # -------- 3. Save meta.pkl -------- #
     with open(os.path.join(processed_dir, "meta.pkl"), "wb") as f:
         pickle.dump(meta, f)
 
-    # -------- 4. 返回 -------- #
+    # -------- 4. Return -------- #
     res = {
         "model_id": model_id,
         "processed_data_dir": processed_dir,
@@ -428,16 +421,16 @@ def train_model_generator(
     periodic logging, plotting, safe stop signals, checkpointing at best val loss,
     and the ability to run evaluation-only.
 
-    -------------- 额外特性 --------------
-    · 所有训练参数、日志路径写入 SQLite 数据库（见 db_manager.py）
-    · 仅保存相对路径，方便整体迁移
+    -------------- Additional Features --------------
+    · All training parameters and log paths are written to SQLite database (see db_manager.py)
+    · Only relative paths are stored for easy migration
     """
-    # ------------------- 0. 在数据库注册 / 保存训练配置 ------------------- #
+    # ------------------- 0. Register/Save Training Config in Database ------------------- #
     # -- DB Integration --
     model_name = os.path.basename(os.path.abspath(out_dir)) or "new_model"
     model_id = dbm.register_model(model_name, out_dir)
-
-    # 将所有训练超参数打包成 dict（便于后续在 UI 中恢复）
+    
+    # Package all training hyperparameters into dict (for later UI restoration)
     _training_cfg_local_vars = dict(
         data_dir=data_dir,
         out_dir=out_dir,
@@ -473,7 +466,7 @@ def train_model_generator(
         seed=seed,
         save_interval=save_interval
     )
-    # 首次进入即写库（后续覆盖即可）
+    # Write when first entered (subsequent entries will overwrite)
     dbm.save_training_config(model_id, _training_cfg_local_vars)
     # -------------------------------------------------------------------- #
 
@@ -871,7 +864,7 @@ def train_model_generator(
                         'val_plot_losses': val_plot_losses
                     }, f)
 
-                # -- DB Integration -- 保存日志文件路径
+                # -- DB Integration -- Save training log path.
                 dbm.save_training_log(model_id, loss_log_path)
 
                 fig, ax = plt.subplots()
@@ -1048,9 +1041,7 @@ def train_model_generator(
 
     return
 
-##############################################################################
-# Inference: loads from out_dir/ckpt.pt
-##############################################################################
+# -------------- Inference: loads from out_dir/ckpt.pt------------------
 
 def generate_text(
     data_dir,
@@ -1069,7 +1060,7 @@ def generate_text(
     Generates text from a single checkpoint and把推理配置/历史写入数据库。
     若 out_dir 以 .pt 结尾，则直接当作 ckpt 路径；否则默认 out_dir/ckpt.pt。
     """
-    # ---------------- 0. 数据库：确定 model_id & 记录配置 ---------------- #
+    # ---------------- 0. Database: ensure model_id & record config ---------------- #
     # -- DB Integration --
     ckpt_dir = out_dir if out_dir.endswith('.pt') else os.path.join(out_dir, 'ckpt.pt')
     model_dir_for_db = os.path.dirname(ckpt_dir)  # 用目录定位模型
@@ -1108,7 +1099,7 @@ def generate_text(
         ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
         ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
-        # ----------- 1. 解析 ckpt 路径（保持原有逻辑） -----------
+        # ----------- 1. Analyze ckpt path -----------
         ckpt_path = ckpt_dir
         if not os.path.exists(ckpt_path):
             err = f"Error: checkpoint not found at {ckpt_path}."
@@ -1151,7 +1142,7 @@ def generate_text(
             yield f"Error: input length ({xids.size(1)}) exceeds block size ({block_size})."
             return
 
-        # ----------- 2. 生成文本 & 累积输出（保持原逻辑） ------------
+        # ----------- 3. Generate text & accumulate output ------------
         accumulated_output = []
         with torch.no_grad():
             with ctx:
@@ -1184,29 +1175,25 @@ def generate_text(
 
         final_text = "\n\n".join(accumulated_output)
 
-        # ---------------- 3. 推理历史写入数据库 ------------------ #
+        # ---------------- 3. Write inference history to DB ------------------ #
         # -- DB Integration --
         dbm.save_inference_history(model_id, final_text)
-        # -------------------------------------------------------- #
 
     except Exception as ex:
         yield f"An unexpected error occurred: {str(ex)}"
 
-
-##############################################################################
-# Building the Gradio App
-##############################################################################
+# --------------- Building the Gradio App ---------------------
 
 def build_app_interface(selected_lang: str = "zh"):
     """
-    UI 顶层函数
-    已实现：
-      · 新模型/模型名逻辑、自动目录、下拉刷新/删除  
-      · 语言切换：切换 lang_select 下拉后，**所有组件的 label & 默认值** 同步刷新  
+        Top-level UI function
+        Implemented:
+          · Logic for new model/model name, automatic directory, dropdown refresh/delete  
+          · Language switching: After switching the `lang_select` dropdown, **all component labels & default values** are refreshed synchronously  
     """
 
     # ------------------------------------------------------------------ #
-    # —— 小工具
+    # tools
     # ------------------------------------------------------------------ #
     def _model_choices():
         return [f"{m['id']} - {m['name']}" for m in dbm.get_all_models()]
@@ -1234,7 +1221,7 @@ def build_app_interface(selected_lang: str = "zh"):
             return None
 
     # ------------------------------------------------------------------ #
-    # —— 初始化语言字典 & 样式
+    # Initialize Gradio app
     # ------------------------------------------------------------------ #
     T = LANG_JSON[selected_lang]
 
@@ -1249,7 +1236,7 @@ def build_app_interface(selected_lang: str = "zh"):
     # ------------------------------------------------------------------ #
     with gr.Blocks(title=T["app_title"], css=custom_css) as demo:
 
-        # ========= 顶部：模型管理 / 语言 ========= #
+        # ========= Top: model management / language ========= #
         with gr.Row():
             model_dropdown     = gr.Dropdown(label=T["registered_models"], choices=_model_choices(), interactive=True)
             refresh_models_btn = gr.Button(T["refresh_tables"])
@@ -1262,7 +1249,7 @@ def build_app_interface(selected_lang: str = "zh"):
         # ========= Tabs ========= #
         with gr.Tabs() as main_tabs:
 
-            # -------------- 数据处理 Tab -------------- #
+            # -------------- Data processing Tab -------------- #
             with gr.Tab(T["data_process_tab"]) as data_process_tab:
                 with gr.Row():
                     input_text = gr.Textbox(label=T["dp_paste_text"], lines=19.5)
@@ -1284,7 +1271,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 process_btn    = gr.Button(T["dp_start_btn"])
                 process_output = gr.Textbox(label=T["dp_result"], lines=5, interactive=False)
 
-            # -------------- 训练 Tab -------------- #
+            # -------------- Training Tab -------------- #
             with gr.Tab(T["train_tab"]) as train_tab:
                 train_params_title_md = gr.Markdown(f"### {T['train_params_title']}")
 
@@ -1402,7 +1389,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 inf_output = gr.Textbox(label=T["inf_result"], lines=10, interactive=False)
 
         # ------------------------------------------------------------------ #
-        # —— 回调：数据处理
+        # Call backs: data processing / training / inference
         # ------------------------------------------------------------------ #
         def data_processing_cb(
             new_flag, model_name, dropdown_val,
@@ -1445,12 +1432,12 @@ def build_app_interface(selected_lang: str = "zh"):
         )
 
         # ------------------------------------------------------------------ #
-        # —— 回调：训练停止
+        # Call backs: stop training
         # ------------------------------------------------------------------ #
         stop_btn.click(fn=stop_training, inputs=[], outputs=[])
 
         # ------------------------------------------------------------------ #
-        # —— 回调：训练启动（保持原逻辑）
+        # Call backs: start training
         # ------------------------------------------------------------------ #
         def training_cb(
             data_dir_, out_dir_, plot_interval_, log_interval_, num_eval_seeds_,
@@ -1524,7 +1511,7 @@ def build_app_interface(selected_lang: str = "zh"):
         )
 
         # ------------------------------------------------------------------ #
-        # —— 回调：推理
+        # Call backs: inference
         # ------------------------------------------------------------------ #
         def inference_cb(
             data_dir_inf_, out_dir_inf_,
@@ -1560,7 +1547,7 @@ def build_app_interface(selected_lang: str = "zh"):
         )
 
         # ------------------------------------------------------------------ #
-        # —— 回调：模型选择
+        # Call backs: model selection
         # ------------------------------------------------------------------ #
         def _reset_updates():
             def _d(val=""): return gr.update(value=val)
@@ -1709,7 +1696,7 @@ def build_app_interface(selected_lang: str = "zh"):
         )
 
         # ------------------------------------------------------------------ #
-        # —— 回调：删除模型
+        # Call backs: delete model
         # ------------------------------------------------------------------ #
         def delete_model_cb(sel: str):
             if sel and " - " in sel:
@@ -1749,7 +1736,7 @@ def build_app_interface(selected_lang: str = "zh"):
         refresh_models_btn.click(lambda: gr.update(choices=_model_choices()), [], [model_dropdown])
 
         # ------------------------------------------------------------------ #
-        # —— 回调：语言切换
+        # Call backs: language switch
         # ------------------------------------------------------------------ #
         def switch_language(lang_code: str):
             Tn = LANG_JSON[lang_code]
@@ -1760,16 +1747,16 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(label=Tn["train_tab"]),
                 gr.update(label=Tn["infer_tab"]),
         
-                # 顶部控制区
+                # Top bar
                 gr.update(label=Tn["registered_models"]),  # model_dropdown
                 gr.update(value=Tn["refresh_tables"]),     # Button: refresh_models_btn
                 gr.update(value=Tn["delete_selected_model"]), # Button: delete_model_btn
         
-                # 模型通用设置
+                # Model management panel
                 gr.update(label=Tn["new_model"]),        # new_model_chk
                 gr.update(label=Tn["model_name"]),       # model_name_box
         
-                # 数据处理面板
+                # Data processing panel
                 gr.update(label=Tn["dp_paste_text"]),      # input_text
                 gr.update(label=Tn["dp_txt_dir"]),         # txt_dir
                 gr.update(label=Tn["dp_no_val_set"]),      # no_val_set
@@ -1779,7 +1766,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(value=Tn["dp_start_btn"]),       # process_btn (Button)
                 gr.update(label=Tn["dp_result"]),          # process_output
                 
-                # 训练面板（仅更新 label，不改值）
+                # Training panel
                 gr.update(value=f"### {Tn['train_params_title']}"), # train_params_title_md
                 gr.update(label=Tn["train_data_dir"]),     # data_dir_box
                 gr.update(label=Tn["train_out_dir"]),      # out_dir_box
@@ -1816,7 +1803,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(label=Tn["train_log"]),          # train_log
                 gr.update(label=Tn["train_plot"]),         # train_plot
                 
-                # 推理面板
+                # Inference panel
                 gr.update(label=Tn["dp_processed_dir"]),   # data_dir_inf
                 gr.update(label=Tn["inf_out_dir"]),        # out_dir_inf
                 gr.update(label=Tn["inf_prompt"]),         # prompt_box
@@ -1862,10 +1849,7 @@ def build_app_interface(selected_lang: str = "zh"):
 
     return demo
 
-##############################################################################
-# Launch
-##############################################################################
-
+# ----------------- Launch -------------------
 if __name__=="__main__":
     demo = build_app_interface()
     demo.launch(server_name="0.0.0.0", server_port=7860, share=False)
