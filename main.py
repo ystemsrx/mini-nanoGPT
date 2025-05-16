@@ -183,7 +183,7 @@ def process_data(
     num_proc: int = DEFAULT_CONFIG["data_process"]["num_proc"]
 ):
     """
-    数据处理核心（全代码，无省略）
+    数据处理核心
 
     参数：
       · model_name/new_model/selected_model_id    — 见设计说明
