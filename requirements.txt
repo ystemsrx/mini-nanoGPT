@@ -4,3 +4,4 @@ matplotlib>=3.5.0
 gradio>=3.50.0
 tiktoken>=0.5.0
 Pillow>=9.0.0
+tokenizers
