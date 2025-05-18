@@ -297,6 +297,7 @@ def build_app_interface(selected_lang: str = "zh"):
                     f"model_id = {info['model_id']}\n"
                     f"processed_dir = {info['processed_data_dir']}\n"
                     f"vocab_size = {info['vocab_size']}\n"
+                    f"tokenizer = {info['tokenizer']}\n"
                     f"train_size = {info['train_size']}" +
                     (f"\nval_size = {info['val_size']}" if 'val_size' in info else "\n(no val)")
                 )

@@ -42,7 +42,7 @@ def encode_gpt2_chunk(chunk, tokenizer):
 # ------ HuggingFace Tokenizers ------
 def _encode_custom_chunk(chunk: str, tokenizer_path: str):
     """
-    Load local tokenizer.json and encode a chunk of text.
+    Load local assets/tokenizer.json and encode a chunk of text.
     """
     from tokenizers import Tokenizer        # 局部 import，主进程无需强依赖
     tok = Tokenizer.from_file(tokenizer_path)
@@ -62,7 +62,7 @@ def process_data(
     num_proc: int = DEFAULT_CONFIG["data_process"]["num_proc"]
 ):
     """
-    - If "Use tokenizer" is checked, it will first attempt to use `tokenizer.json` in the root directory;
+    - If "Use tokenizer" is checked, it will first attempt to use `assets/tokenizer.json` in the root directory;
       if it does not exist, it will fall back to the GPT-2 tokenizer.
     - Only **actually occurring** tokens are saved, and they are automatically remapped to consecutive IDs.
     """
@@ -100,18 +100,18 @@ def process_data(
     actual_proc = min(num_proc, cpu_count()) if size_mb > 100 else 1
 
     # ================================
-    # 2-A. 使用分词器 (tokenizer.json / GPT-2)
+    # 2-A. 使用分词器 (assets/tokenizer.json / GPT-2)
     # ================================
     if use_gpt2_tokenizer:
-        tokenizer_path = Path.cwd() / "tokenizer.json"
+        tokenizer_path = Path.cwd() / "assets/tokenizer.json"
 
-        # ---- ① 根目录存在 tokenizer.json → 使用 HuggingFace Tokenizers ----
+        # ---- ① 根目录存在 assets/tokenizer.json → 使用 HuggingFace Tokenizers ----
         if tokenizer_path.exists():
             try:
                 from tokenizers import Tokenizer  # 提前检测依赖
             except ImportError as e:
                 raise ImportError(
-                    "Detected tokenizer.json, but the `tokenizers` library is not installed in the current environment:\n"
+                    "Detected assets/tokenizer.json, but the `tokenizers` library is not installed in the current environment:\n"
                     "    pip install tokenizers\n"
                 ) from e
 
@@ -142,7 +142,7 @@ def process_data(
             if eot_id_old is not None and (len(tokens_full) == 0 or tokens_full[-1] != eot_id_old):
                 tokens_full.append(eot_id_old)
 
-        # ---- ② No tokenizer.json → Fallback to GPT-2 (tiktoken) ----
+        # ---- ② No assets/tokenizer.json → Fallback to GPT-2 (tiktoken) ----
         else:
             enc = tiktoken.get_encoding("gpt2")
             tok_name = "gpt2"
@@ -170,7 +170,7 @@ def process_data(
 
         # ---- ④ Build meta.pkl ----
         if tokenizer_path.exists():
-            # For custom tokenizer.json，use HF Tokenizers decode
+            # For custom assets/tokenizer.json，use HF Tokenizers decode
             tokenizer_for_meta = Tokenizer.from_file(str(tokenizer_path))
             itos = {nid: tokenizer_for_meta.decode([oid]) for oid, nid in old2new.items()}
         else:
@@ -195,6 +195,7 @@ def process_data(
     # 2-B. Character-level encoding
     # ================================
     else:
+        tok_name = "character level"
         chars = sorted(set(data)) if actual_proc == 1 else sorted(
             set().union(*Pool(actual_proc).map(get_unique_chars, get_chunks(data, actual_proc)))
         )
@@ -221,7 +222,7 @@ def process_data(
         if val_ids is not None:
             val_ids.tofile(os.path.join(processed_dir, "val.bin"))
 
-        meta = {"vocab_size": vocab_size, "itos": itos, "stoi": stoi}
+        meta = {"vocab_size": vocab_size, "itos": itos, "stoi": stoi, "tokenizer": tok_name}  # 添加tokenizer信息到meta
         train_sz = len(train_ids)
         val_sz = len(val_ids) if val_ids is not None else 0
 
@@ -234,8 +235,10 @@ def process_data(
         "model_id": model_id,
         "processed_data_dir": processed_dir,
         "vocab_size": vocab_size,
-        "train_size": train_sz
+        "train_size": train_sz,
+        "tokenizer": tok_name
     }
     if not no_validation:
         res["val_size"] = val_sz
+        
     return res
