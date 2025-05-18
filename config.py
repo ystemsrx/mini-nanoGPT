@@ -61,7 +61,7 @@ DEFAULT_CONFIG = {
         "temperature": 0.7,
         "top_k": 50,
         "seed": 1024,
-        "device": "cuda",
+        "device": selected_device,
         "dtype": "float16",
         "compile_model": True
     }
