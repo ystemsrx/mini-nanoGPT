@@ -39,40 +39,9 @@ This `database` branch builds upon the original features by introducing **model 
 
 ```bash
 pip install -r requirements.txt
-python main.py
+python apppy
 ```
 
 Model registration, configuration storage, and related operations during training and inference are implemented in the `DBManager` source file.
 
 ---
-
-## 📁 File Structure Overview
-
-### `db_manager.py` (Core Module)
-
-Encapsulates the `DBManager` class, responsible for:
-
-* Initializing the SQLite database and creating:
-
-  * Model metadata table
-  * Training configuration table
-  * Log path table
-  * Inference parameters and history table
-* Providing core methods such as:
-
-  * `register_model`: Register a new model
-  * `rename_model`: Rename a model and update the corresponding folder
-  * `delete_model`: Delete a model and related directories
-  * `get_model_basic_info` / `get_all_models`: Query model information
-  * Save/load training and inference configs, history records, etc.
-
-This module ensures consistency between database records and the file system, reducing manual maintenance and improving reliability.
-
----
-
-### `main.py` (Main Entry Point)
-
-Integrates the database management logic:
-
-* Embeds `DBManager` API calls into data loading, model training, and inference stages to automate model registration and configuration storage.
-* The frontend adds a **“Model Management”** tab using Gradio to enable interactive database operations for models.
