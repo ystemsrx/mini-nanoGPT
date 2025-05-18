@@ -317,6 +317,116 @@ def build_app_interface(selected_lang: str = "zh"):
         # ------------------------------------------------------------------ #
         stop_btn.click(fn=stop_training, inputs=[], outputs=[])
 
+        # -----------------------------
+        # LR Scheduler Callback
+        # -----------------------------
+        def update_lr_scheduler_params(scheduler_type):
+            """
+            根据选择的学习率调度器类型，更新相关参数的交互状态和值
+            """
+            # 初始化所有参数框的状态
+            warmup_update = gr.update(interactive=False, value="")
+            lr_decay_update = gr.update(interactive=False, value="")
+            min_lr_update = gr.update(interactive=False, value="")
+            step_size_update = gr.update(interactive=False, value="")
+            step_gamma_update = gr.update(interactive=False, value="")
+            polynomial_power_update = gr.update(interactive=False, value="")
+            
+            # 根据调度器类型设置相应参数框的状态
+            if scheduler_type == "none":
+                # 所有参数都不需要
+                pass
+            
+            elif scheduler_type == "cosine":
+                # 余弦调度器需要 warmup_iters, lr_decay_iters, min_lr
+                warmup_update = gr.update(
+                    interactive=True, 
+                    value=DEFAULT_CONFIG["training"]["warmup_iters"]
+                )
+                lr_decay_update = gr.update(
+                    interactive=True, 
+                    value=DEFAULT_CONFIG["training"]["lr_decay_iters"]
+                )
+                min_lr_update = gr.update(
+                    interactive=True, 
+                    value=DEFAULT_CONFIG["training"]["min_lr"]
+                )
+                
+            elif scheduler_type == "constant_with_warmup":
+                # 常数调度器只需要 warmup_iters
+                warmup_update = gr.update(
+                    interactive=True, 
+                    value=DEFAULT_CONFIG["training"]["warmup_iters"]
+                )
+                
+            elif scheduler_type == "linear":
+                # 线性调度器需要 warmup_iters, lr_decay_iters, min_lr
+                warmup_update = gr.update(
+                    interactive=True, 
+                    value=DEFAULT_CONFIG["training"]["warmup_iters"]
+                )
+                lr_decay_update = gr.update(
+                    interactive=True, 
+                    value=DEFAULT_CONFIG["training"]["lr_decay_iters"]
+                )
+                min_lr_update = gr.update(
+                    interactive=True, 
+                    value=DEFAULT_CONFIG["training"]["min_lr"]
+                )
+                
+            elif scheduler_type == "step":
+                # 步长调度器需要 step_size, step_gamma
+                step_size_update = gr.update(
+                    interactive=True, 
+                    value=DEFAULT_CONFIG["training"]["step_size"]
+                )
+                step_gamma_update = gr.update(
+                    interactive=True, 
+                    value=DEFAULT_CONFIG["training"]["step_gamma"]
+                )
+                
+            elif scheduler_type == "polynomial":
+                # 多项式调度器需要所有参数
+                warmup_update = gr.update(
+                    interactive=True, 
+                    value=DEFAULT_CONFIG["training"]["warmup_iters"]
+                )
+                lr_decay_update = gr.update(
+                    interactive=True, 
+                    value=DEFAULT_CONFIG["training"]["lr_decay_iters"]
+                )
+                min_lr_update = gr.update(
+                    interactive=True, 
+                    value=DEFAULT_CONFIG["training"]["min_lr"]
+                )
+                polynomial_power_update = gr.update(
+                    interactive=True, 
+                    value=DEFAULT_CONFIG["training"]["polynomial_power"]
+                )
+                
+            return [
+                warmup_update,
+                lr_decay_update,
+                min_lr_update,
+                step_size_update,
+                step_gamma_update,
+                polynomial_power_update
+            ]
+        
+        # 连接学习率调度器下拉框的change事件到回调函数
+        lr_scheduler_box.change(
+            fn=update_lr_scheduler_params,
+            inputs=[lr_scheduler_box],
+            outputs=[
+                warmup_box,
+                lr_decay_box,
+                min_lr_box,
+                step_size_box,
+                step_gamma_box,
+                polynomial_power_box
+            ]
+        )
+
         # ------------------------------------------------------------------ #
         # Call backs: start training
         # ------------------------------------------------------------------ #
@@ -426,55 +536,6 @@ def build_app_interface(selected_lang: str = "zh"):
                     num_samples_box, max_new_tokens_box,
                     temperature_box, top_k_box, seed_box_inf],
             outputs=inf_output
-        )
-
-        # ------------------------------------------------------------------ #
-        # Call backs: lr scheduler parameter interactivity
-        # ------------------------------------------------------------------ #
-        def update_scheduler_params(scheduler_type):
-            """根据选择的调度器类型，更新相关参数的可交互性"""
-            # 每种调度器需要的参数映射
-            needed_params = {
-                "none": [],
-                "cosine": ["warmup_iters", "lr_decay_iters", "min_lr"],
-                "constant_with_warmup": ["warmup_iters"],
-                "linear": ["warmup_iters", "lr_decay_iters", "min_lr"],
-                "step": ["step_size", "step_gamma"],
-                "polynomial": ["warmup_iters", "lr_decay_iters", "min_lr", "polynomial_power"]
-            }
-            
-            # 获取当前调度器需要的参数
-            current_needed = needed_params.get(scheduler_type, [])
-            
-            # 准备更新
-            is_warmup_needed = "warmup_iters" in current_needed
-            is_lr_decay_needed = "lr_decay_iters" in current_needed
-            is_min_lr_needed = "min_lr" in current_needed
-            is_step_size_needed = "step_size" in current_needed
-            is_step_gamma_needed = "step_gamma" in current_needed
-            is_polynomial_power_needed = "polynomial_power" in current_needed
-            
-            return [
-                gr.update(interactive=is_warmup_needed), 
-                gr.update(interactive=is_lr_decay_needed),
-                gr.update(interactive=is_min_lr_needed),
-                gr.update(interactive=is_step_size_needed), 
-                gr.update(interactive=is_step_gamma_needed),
-                gr.update(interactive=is_polynomial_power_needed)
-            ]
-        
-        # 注册lr_scheduler_box的change事件
-        lr_scheduler_box.change(
-            fn=update_scheduler_params,
-            inputs=[lr_scheduler_box],
-            outputs=[
-                warmup_box, 
-                lr_decay_box, 
-                min_lr_box, 
-                step_size_box, 
-                step_gamma_box, 
-                polynomial_power_box
-            ]
         )
 
         # ------------------------------------------------------------------ #
@@ -812,6 +873,25 @@ def build_app_interface(selected_lang: str = "zh"):
                 num_samples_box, max_new_tokens_box,
                 temperature_box, top_k_box, inf_btn, inf_output,
                 seed_box_inf
+            ]
+        )
+
+        # 初始化UI时，触发一次学习率调度器相关参数的更新
+        # 使用默认值进行一次初始化
+        default_scheduler = DEFAULT_CONFIG["training"]["lr_scheduler_type"]
+        
+        # 不要直接使用update方法，而是通过一个dummy event处理初始化
+        # 这样gradio会在界面加载时正确应用这些更新
+        demo.load(
+            fn=lambda: update_lr_scheduler_params(default_scheduler),
+            inputs=None,
+            outputs=[
+                warmup_box,
+                lr_decay_box,
+                min_lr_box,
+                step_size_box,
+                step_gamma_box,
+                polynomial_power_box
             ]
         )
 
