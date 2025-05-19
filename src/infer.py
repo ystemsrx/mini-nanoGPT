@@ -119,12 +119,20 @@ def generate_text(
         with torch.no_grad():
             with ctx:
                 for s_i in range(num_samples):
+                    # 每个样本开始时输出标题
+                    sample_header = f"Sample {s_i+1}:\n"
+                    yield sample_header
+                    
                     idx = xids.clone()
-                    generated = prompt
-                    for _ in range(max_new_tokens):
+                    # 先输出提示词部分
+                    current_text = prompt
+                    prev_text = ""
+                    
+                    for token_i in range(max_new_tokens):
                         if idx.size(1) == 0:
                             yield "Can't generate an empty sequence."
                             return
+                            
                         idx_cond = idx[:, -block_size:]
                         logits, _ = model(idx_cond)
                         logits = logits[:, -1, :] / temperature
@@ -136,14 +144,23 @@ def generate_text(
                         idx_next = torch.multinomial(probs, num_samples=1)
                         idx = torch.cat((idx, idx_next), dim=1)
 
+                        # 解码当前生成的完整文本
                         generated_tokens = idx[0].tolist()
-                        generated = decode(generated_tokens)
-
-                    sample_txt = f"Sample {s_i+1}:\n{generated}"
-                    accumulated_output.append(sample_txt)
-                    yield sample_txt
+                        current_text = decode(generated_tokens)
+                        
+                        # 只输出新生成的部分（差量输出）
+                        new_text = current_text[len(prev_text):]
+                        yield new_text
+                        prev_text = current_text
+                    
+                    # 样本生成完毕，保存完整文本
+                    full_sample = f"{sample_header}{current_text}"
+                    accumulated_output.append(full_sample)
+                    
+                    # 样本之间添加分隔线
                     if s_i < num_samples - 1:
-                        yield "-" * 20
+                        separator = "\n" + "-" * 30 + "\n"
+                        yield separator
 
         final_text = "\n\n".join(accumulated_output)
 

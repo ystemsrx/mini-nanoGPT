@@ -524,6 +524,7 @@ def build_app_interface(selected_lang: str = "zh"):
             temperature_, top_k_, seed_inf_
         ):
             try:
+                output = ""  # 用于累积显示的输出
                 gen = generate_text(
                     data_dir=data_dir_inf_, out_dir=out_dir_inf_,
                     prompt=prompt_,
@@ -536,10 +537,11 @@ def build_app_interface(selected_lang: str = "zh"):
                     dtype=DEFAULT_CONFIG["inference"]["dtype"],
                     compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
                 )
-                acc = ""
+                
                 for piece in gen:
-                    acc += piece + "\n\n"
-                    yield acc.strip()
+                    output += piece  # 直接累加不添加额外换行，因为新实现中已经处理了格式
+                    yield output
+                    
             except Exception as e:
                 yield f"Error: {str(e)}"
 
