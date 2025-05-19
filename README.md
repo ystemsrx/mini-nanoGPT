@@ -39,7 +39,7 @@ This `database` branch builds upon the original features by introducing **model 
 
 ```bash
 pip install -r requirements.txt
-python apppy
+python app.py
 ```
 
 Model registration, configuration storage, and related operations during training and inference are implemented in the `DBManager` source file.
