@@ -325,7 +325,7 @@ def build_app_interface(selected_lang: str = "zh"):
             """
             根据选择的学习率调度器类型，更新相关参数的交互状态和值
             """
-            # 初始化所有参数框的状态
+            # 初始化所有参数框的状态为不可交互且值为空
             warmup_update = gr.update(interactive=False, value="")
             lr_decay_update = gr.update(interactive=False, value="")
             min_lr_update = gr.update(interactive=False, value="")
@@ -335,7 +335,7 @@ def build_app_interface(selected_lang: str = "zh"):
             
             # 根据调度器类型设置相应参数框的状态
             if scheduler_type == "none":
-                # 所有参数都不需要
+                # 所有参数都不需要，保持空值
                 pass
             
             elif scheduler_type == "cosine":
@@ -447,12 +447,22 @@ def build_app_interface(selected_lang: str = "zh"):
         ):
             img_pil = None
             try:
+                # 添加的辅助函数，处理空字符串
+                def safe_int(v, default):
+                    return default if v == "" else int(v)
+                
+                def safe_float(v, default):
+                    return default if v == "" else float(v)
+                
+                # 使用默认配置获取默认值
+                defaults = DEFAULT_CONFIG["training"]
+                
                 num_eval_seeds_int = int(num_eval_seeds_)
                 if num_eval_seeds_int < 0 or num_eval_seeds_int > 2**32-1:
                     raise ValueError("seed out of range")
             except ValueError as e:
                 yield (f"<div style='color:red;'>{str(e)}</div>", str(e), img_pil); return
-
+        
             try:
                 gen = train_model_generator(
                     data_dir=data_dir_,
@@ -470,9 +480,12 @@ def build_app_interface(selected_lang: str = "zh"):
                     weight_decay=float(weight_decay_),
                     beta1=float(beta1_), beta2=float(beta2_),
                     lr_scheduler_type=lr_scheduler_type_,
-                    warmup_iters=int(warmup_), lr_decay_iters=int(lr_decay_),
-                    min_lr=float(min_lr_), step_size=int(step_size_),
-                    step_gamma=float(step_gamma_), polynomial_power=float(polynomial_power_),
+                    warmup_iters=safe_int(warmup_, defaults["warmup_iters"]),
+                    lr_decay_iters=safe_int(lr_decay_, defaults["lr_decay_iters"]),
+                    min_lr=safe_float(min_lr_, defaults["min_lr"]),
+                    step_size=safe_int(step_size_, defaults["step_size"]),
+                    step_gamma=safe_float(step_gamma_, defaults["step_gamma"]),
+                    polynomial_power=safe_float(polynomial_power_, defaults["polynomial_power"]),
                     backend=backend_, device=device_, dtype=dtype_,
                     compile_model=bool(compile_), seed=int(seed_), save_interval=int(save_interval_)
                 )
@@ -482,7 +495,6 @@ def build_app_interface(selected_lang: str = "zh"):
             except Exception as e:
                 err = f"Error: {str(e)}"
                 yield (f"<div style='color:red;'>{err}</div>", err, img_pil)
-
         train_btn.click(
             fn=training_cb,
             inputs=[
