@@ -1,21 +1,12 @@
 # src/ui.py
 import os
 import pickle
-# import io # No longer needed for matplotlib buffer for this plot
 import numpy as np # Required for generate_loss_chart_html
 import torch
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
-# torch.nn, torch.nn.functional, etc. are kept as they might be used by imported functions
-# from torch.optim import AdamW # Not directly used in ui.py
-# from torch.nn.parallel import DistributedDataParallel as DDP # Not directly used in ui.py
-# from torch.distributed import init_process_group, destroy_process_group # Not directly used in ui.py
 
 import gradio as gr
-# from PIL import Image # No longer needed for this plot
-# import matplotlib # No longer needed for this plot
-# matplotlib.use('Agg') # No longer needed for this plot
-# import matplotlib.pyplot as plt # No longer needed for this plot
 
 from src.config import DEFAULT_CONFIG, LANG_JSON # Assuming IntegerTypes was not used in the original snippet
 from src.db_manager import DBManager
@@ -26,10 +17,6 @@ from src.infer import generate_text
 dbm = DBManager()
 
 # --- SVG Chart Generation Function ---
-# (The generate_loss_chart_html function provided by you should be pasted here)
-# For brevity, I'm assuming it's correctly defined as in your example.
-# Make sure it's at this top level in the file.
-
 def generate_loss_chart_html(
     train_data, # List of (epoch, loss) tuples
     val_data,   # List of (epoch, loss) tuples
