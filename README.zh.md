@@ -73,8 +73,7 @@ python main.py
 - 这样你应当能够正常的看到两条动态变化的曲线。
 - 点击"开始训练"，等待模型训练完成
 
-![image](https://github.com/user-attachments/assets/75e53570-393b-48db-aac3-f9b6822d05b1)
-
+![image](https://github.com/user-attachments/assets/c43ca548-fd6b-4f0a-98c5-55586bec42db)
 
 #### 仅评估模式？
 - 这个模式能够让你评估模型在验证集上的损失。请将`评估种子数量 (Number of Evaluation Seeds)`调为大于0的任意值，将开启仅评估模式。你能看到模型在使用不同种子上的损失。
