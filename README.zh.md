@@ -59,8 +59,7 @@ python main.py
 - 完成后点击"开始处理"。
 这里我用一小段文本来举例：
 
-![image](https://github.com/user-attachments/assets/ec8db0d6-5673-43ae-a4cb-ac064f7209ae)
-
+![image](https://github.com/user-attachments/assets/efd7519e-7822-453a-b6a1-896b3135861f)
 
 ### 第二步：训练模型
 - 切换到"训练"页面，根据需要调整参数（如果只是想体验，可以保持默认值）。
