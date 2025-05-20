@@ -458,7 +458,7 @@ def build_app_interface(selected_lang: str = "zh"):
 
         # ========= Top: model management / language ========= #
         with gr.Row():
-            model_dropdown = gr.Dropdown(label=T["registered_models"], choices=_get_model_choices_list(), interactive=True)
+            model_dropdown = gr.Dropdown(label=T["registered_models"], choices=_get_model_choices_list(), value=None, interactive=True)
             refresh_models_btn = gr.Button(T["refresh_tables"])
             delete_model_btn = gr.Button(T["delete_selected_model"], variant="stop")
 
