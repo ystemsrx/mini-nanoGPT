@@ -60,8 +60,7 @@ Open your browser and visit the displayed link to see the training interface! (U
   
   Here's an example using a small piece of text:
   
-![image](https://github.com/user-attachments/assets/667d1fb4-9f9a-4d3a-8574-894be7c71bc6)
-
+![image](https://github.com/user-attachments/assets/0e5675b9-dd02-4995-81f1-cf1577dccd3d)
 
 ### Step 2: Train the Model
 - Switch to the "Training" page and adjust the parameters as needed (if you just want to experience it, you can keep the default values).
