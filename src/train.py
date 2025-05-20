@@ -3,20 +3,14 @@
 import os
 import pickle
 import math
-# import io # No longer needed for image buffer
 from contextlib import nullcontext
 
 import numpy as np
 import torch
-import torch.nn.functional as F # Keep for model or other utilities
-from torch.optim import AdamW # Keep for optimizer
-from torch.nn.parallel import DistributedDataParallel as DDP # Keep for DDP
-from torch.distributed import init_process_group, destroy_process_group # Keep for DDP
-# from PIL import Image # No longer needed for generating plots in this file
-
-# import matplotlib # No longer needed
-# matplotlib.use('Agg') # No longer needed
-# import matplotlib.pyplot as plt # No longer needed
+import torch.nn.functional as F
+from torch.optim import AdamW
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed import init_process_group, destroy_process_group
 
 from src.config import DEFAULT_CONFIG, IntegerTypes
 from src.db_manager import DBManager
@@ -69,12 +63,8 @@ def train_model_generator(
     seed=DEFAULT_CONFIG["training"]["seed"],
     save_interval=DEFAULT_CONFIG["training"]["save_interval"]
 ):
-    # ... (0. Register/Save Training Config in Database - unchanged) ...
     model_name = os.path.basename(os.path.abspath(out_dir)) or "new_model" # Ensure out_dir is absolute first
-    # If out_dir might be relative, ensure it's handled, e.g. model_name = os.path.basename(out_dir)
-    # The original code has `os.path.basename(os.path.abspath(out_dir))`. Let's assume out_dir is valid path.
-    
-    # Robust model_name extraction
+
     abs_out_dir = os.path.abspath(out_dir)
     model_name_from_path = os.path.basename(abs_out_dir)
     if not model_name_from_path and abs_out_dir.endswith(os.path.sep): # Handle trailing slash case
@@ -101,8 +91,6 @@ def train_model_generator(
     stop_signal = False
 
     def make_progress_html(progress_val, max_val, color='black'):
-        # Ensure max_val is not zero to avoid issues if max_iters is 0 (though unlikely)
-        # The progress element handles value > max by capping at max.
         html = (
             f"<div style='width: 100%; height: 20px; margin-bottom: 5px;'>"
             f"<progress value='{progress_val}' max='{max_val if max_val > 0 else 1}' " # Ensure max_val > 0
@@ -115,7 +103,6 @@ def train_model_generator(
     empty_plot_data = ([], [], [], [])
 
     try:
-        # ... (Seed validation, DDP setup, device setup - unchanged) ...
         num_eval_seeds = int(num_eval_seeds)
         if num_eval_seeds < 0 or num_eval_seeds > 2**32 - 1: # unsigned 32-bit int range
             raise ValueError("Seed for evaluation must be between 0 and 2^32 - 1.")
@@ -125,10 +112,9 @@ def train_model_generator(
             print(error_msg)
             yield (f"<div style='color: red;'>{error_msg}</div>", error_msg, empty_plot_data) # Yield empty data
             return
-        else: # num_eval_seeds was 0 (training mode), this error path shouldn't be hit for num_eval_seeds itself
-            num_eval_seeds = 0 # Explicitly ensure it's 0 if it was an invalid string for 0
+        else:
+            num_eval_seeds = 0
 
-    # Main seed validation (for training or if num_eval_seeds is 0)
     try:
         current_seed_val = int(seed)
         if not (0 <= current_seed_val <= 2**32 - 1):
@@ -183,7 +169,6 @@ def train_model_generator(
     val_plot_steps, val_plot_losses = [], []
     current_plot_data = (train_plot_steps, train_plot_losses, val_plot_steps, val_plot_losses) # Persist for non-plot yields
 
-    # ... (Dataset verification, get_batch, meta loading - unchanged) ...
     train_bin_path = os.path.join(data_dir, 'train.bin')
     val_bin_path = os.path.join(data_dir, 'val.bin')
     has_val = os.path.exists(val_bin_path)
@@ -202,7 +187,6 @@ def train_model_generator(
         yield (f"<div style='color:red;'>{err}</div>", err, empty_plot_data)
         return
     
-    # get_batch definition (ensure it uses the correct IntegerTypes from config)
     def get_batch(split="train"):
         # Ensure data files exist before trying to memmap
         current_data_path = train_bin_path if split == 'train' else val_bin_path
@@ -218,7 +202,7 @@ def train_model_generator(
             )
         
         max_idx = len(data_memmap) - block_size
-        ix = torch.randint(max_idx, (batch_size,)) # Corrected: max_idx should be exclusive upper bound for randint
+        ix = torch.randint(max_idx, (batch_size,)) # max_idx should be exclusive upper bound for randint
         
         x_list = [torch.from_numpy(data_memmap[i:i+block_size].astype(np.int64)) for i in ix]
         y_list = [torch.from_numpy(data_memmap[i+1:i+1+block_size].astype(np.int64)) for i in ix]
@@ -247,7 +231,6 @@ def train_model_generator(
     vocab_size = meta['vocab_size']
 
 
-    # ... (Model initialization, iter_num, best_val_loss - unchanged) ...
     model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size, bias=bias, vocab_size=vocab_size, dropout=dropout)
     iter_num = 0
     best_val_loss = 1e9 # Initialize with a large value
@@ -255,7 +238,6 @@ def train_model_generator(
     if num_eval_seeds > 0: # Evaluation mode
         gptconf = GPTConfig(**model_args)
         model = GPT(gptconf)
-        # In eval mode, we need to load a checkpoint. Assume ckpt.pt in out_dir.
         ckpt_path_eval = os.path.join(out_dir, 'ckpt.pt')
         if not os.path.exists(ckpt_path_eval):
             msg = f"Error: Checkpoint {ckpt_path_eval} not found for evaluation mode."
@@ -263,10 +245,7 @@ def train_model_generator(
             yield (f"<div style='color:red;'>{msg}</div>", msg, empty_plot_data)
             return
         checkpoint = torch.load(ckpt_path_eval, map_location=device)
-        # Optionally update model_args from checkpoint if they differ, though usually for eval, current args are used with loaded weights.
-        # For simplicity, assuming the loaded checkpoint is compatible with current model_args or has its own.
-        # The original code did this for 'resume' in training. For pure eval, it might be simpler.
-        # Let's load the state dict.
+
         state_dict = checkpoint['model']
         unwanted_prefix = '_orig_mod.'
         for k_sd, v_sd in list(state_dict.items()):
@@ -288,24 +267,18 @@ def train_model_generator(
             yield (f"<div style='color:red;'>{msg}</div>", msg, empty_plot_data)
             return
         checkpoint = torch.load(ckpt_path, map_location=device)
-        # Update model_args from checkpoint to ensure consistency
-        # ckpt_model_args = checkpoint['model_args'] # Using this is safer
-        # for k_arg, v_arg in ckpt_model_args.items(): # Ensure all necessary args are present
-        #    model_args[k_arg] = v_arg # This was in original, good for consistency
-        
-        # Re-checking original logic for model_args update:
-        # It iterates over ckpt_args, not model_args. This is correct.
+
         ckpt_args_from_file = checkpoint['model_args']
         for k_check, v_check in ckpt_args_from_file.items():
             if k_check in model_args: # Update only if key exists in current model_args
                 model_args[k_check] = v_check
-            # else: print(f"Warning: Checkpoint arg '{k_check}' not in current model_args.") # Optional warning
+            else: print(f"Warning: Checkpoint arg '{k_check}' not in current model_args.") # Optional warning
 
-        gptconf = GPTConfig(**model_args) # Create config with potentially updated args
+        gptconf = GPTConfig(**model_args)
         model = GPT(gptconf)
         state_dict = checkpoint['model']
         unwanted_prefix = '_orig_mod.'
-        for k_sd, v_sd in list(state_dict.items()): # Iterate over a copy of items for modification
+        for k_sd, v_sd in list(state_dict.items()):
             if k_sd.startswith(unwanted_prefix):
                 state_dict[k_sd[len(unwanted_prefix):]] = state_dict.pop(k_sd)
         model.load_state_dict(state_dict)
@@ -327,14 +300,10 @@ def train_model_generator(
         yield (f"<div style='color:red;'>{msg}</div>", msg, empty_plot_data)
         return
 
-    if block_size < model.config.block_size: # model.config.block_size is the original/loaded one
-        model.crop_block_size(block_size) # Crop if current block_size is smaller
+    if block_size < model.config.block_size:
+        model.crop_block_size(block_size)
     elif block_size > model.config.block_size:
-        # This case needs careful handling - model wasn't trained for larger block_size.
-        # Usually, block_size from config is used. If user specifies a larger one, it might error.
-        # For simplicity, assume block_size from UI is authoritative for new/scratch.
-        # For resume, model_args block_size would have been updated from checkpoint if different.
-        pass # If current block_size (from UI) is larger, the model's internal block_size (from config) remains.
+        pass
 
     model.to(device)
 
@@ -395,8 +364,6 @@ def train_model_generator(
                 log_buffer_line = f"{actual_seed_idx_display}. Seed: {current_eval_seed}, val_loss={current_val_loss_float:.4f}"
             except Exception as e_eval:
                 log_buffer_line = f"{actual_seed_idx_display}. Seed: {current_eval_seed}, val_loss=ERROR ({str(e_eval)})"
-                # all_eval_losses.append(float('nan')) # Or skip appending if error
-                # eval_steps_axis.append(actual_seed_idx_display)
                 print(f"Error during model evaluation (seed {current_eval_seed}): {e_eval}")
             
             print(log_buffer_line)
@@ -433,21 +400,18 @@ def train_model_generator(
             print(f"Warning: Model compilation failed for training: {e_compile_train}")
 
 
-    raw_model = model # Keep a reference to the unwrapped model
+    raw_model = model
     if ddp:
-        # ddp_local_rank is already defined if ddp is True
         model = DDP(model, device_ids=[ddp_local_rank])
-        raw_model = model.module # Get the original model from DDP wrapper
+        raw_model = model.module
     
     scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
-    def get_lr(it): # Learning rate scheduler logic - unchanged
-        # ... (get_lr function as in original) ...
+    def get_lr(it):
         if it < warmup_iters:
-            return learning_rate * (it + 1) / (warmup_iters + 1) # Ensure warmup_iters > 0 if used
+            return learning_rate * (it + 1) / (warmup_iters + 1)
         
-        # Handle lr_decay_iters being 0 or less than warmup_iters for certain schedulers
-        effective_lr_decay_iters = max(lr_decay_iters, warmup_iters + 1) # Ensure decay phase has some length
+        effective_lr_decay_iters = max(lr_decay_iters, warmup_iters + 1)
 
         if lr_scheduler_type == "none":
             return learning_rate
@@ -517,42 +481,22 @@ def train_model_generator(
         # --- Training Batch and Forward/Backward Pass ---
         try:
             X, Y = get_batch('train')
-        except Exception as e_get_batch_train: # Catch FileNotFoundError or ValueError
+        except Exception as e_get_batch_train:
             msg = f"Error getting training batch: {str(e_get_batch_train)}"
             print(msg)
             if master_process:
                 yield (make_progress_html(iter_num, max_iters), msg, current_plot_data)
-            break # Critical error, stop training
+            break
 
-        # Forward + backward pass
-        # Standard DDP gradient accumulation loop
         for micro_step in range(gradient_accumulation_steps * ddp_world_size): # Multiply back by ddp_world_size if it was divided
-            if ddp: # DDP sync logic for gradient accumulation
-                # Adjust sync context based on whether it's the last micro_step
-                # This logic is complex and depends on how grad_acc_steps was handled with DDP.
-                # Assuming model.no_sync() for all but the last micro_step if accumulation is > 1
-                # The original code divides grad_acc_steps by ddp_world_size, implying each rank does fewer acc steps.
-                # For simplicity, let's assume the accumulation loop is handled per rank.
-                # The provided code implies `gradient_accumulation_steps` is per-rank after division.
-                # So, the loop `range(gradient_accumulation_steps)` is correct per rank.
-                # Synchronization happens naturally at `loss.backward()` or `scaler.step()`.
-                 pass # DDP handles grad sync implicitly unless explicitly managed with no_sync
+            if ddp:
+                 pass
 
             with ctx:
                 logits, loss = model(X, Y)
-                loss = loss / gradient_accumulation_steps # Scale loss for accumulation
-
-            # Immediately async prefetch next batch while model is doing forwards
-            # (This is an optimization, can be omitted for simplicity if causing issues)
-            # X_next, Y_next = get_batch('train') # If prefetching
+                loss = loss / gradient_accumulation_steps
 
             scaler.scale(loss).backward()
-            # X, Y = X_next, Y_next # If prefetching
-
-        # Clip gradients (optional but good practice)
-        # grad_clip = 1.0 # Example value
-        # scaler.unscale_(optimizer) # Unscale before clipping
-        # torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
 
         scaler.step(optimizer)
         scaler.update()
@@ -664,5 +608,3 @@ def train_model_generator(
 
     if ddp:
         destroy_process_group()
-
-    # The generator implicitly returns/stops after the loop or break

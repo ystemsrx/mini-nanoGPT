@@ -1,17 +1,17 @@
 # src/ui.py
 import os
 import pickle
-import numpy as np # Required for generate_loss_chart_html
+import numpy as np
 import torch
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
 
 import gradio as gr
 
-from src.config import DEFAULT_CONFIG, LANG_JSON # Assuming IntegerTypes was not used in the original snippet
+from src.config import DEFAULT_CONFIG, LANG_JSON
 from src.db_manager import DBManager
 from src.data_process import process_data
-from src.train import train_model_generator, stop_training # train_model_generator assumed to be adapted
+from src.train import train_model_generator, stop_training
 from src.infer import generate_text
 
 dbm = DBManager()
@@ -222,7 +222,6 @@ def generate_loss_chart_html(
     if val_path_anim_d and val_anim_segment_length > 0:
         val_anim_segment_svg = f'<path class="line-segment-anim line-val-segment-anim" d="{val_path_anim_d}" style="stroke-dasharray: {val_anim_segment_length}; stroke-dashoffset: {val_anim_segment_length};" />'
 
-    # Ensure legend items only appear if data exists
     legend_items_html = ""
     if train_data:
         legend_items_html += """
@@ -549,13 +548,13 @@ def build_app_interface(selected_lang: str = "zh"):
                                              value=DEFAULT_CONFIG["training"]["lr_decay_iters"])
                     min_lr_box = gr.Number(label=T["train_min_lr"],
                                            value=DEFAULT_CONFIG["training"]["min_lr"])
-                
-                with gr.Row(): # New row for scheduler specific params as per original code
-                    step_size_box = gr.Number(label="Step Size", # Assuming T["train_step_size"] if translated
+                    
+                with gr.Row():
+                    step_size_box = gr.Number(label="Step Size",
                                                value=DEFAULT_CONFIG["training"]["step_size"])
-                    step_gamma_box = gr.Number(label="Step Gamma", # Assuming T["train_step_gamma"]
+                    step_gamma_box = gr.Number(label="Step Gamma",
                                                 value=DEFAULT_CONFIG["training"]["step_gamma"])
-                    polynomial_power_box = gr.Number(label="Polynomial Power", # Assuming T["train_poly_power"]
+                    polynomial_power_box = gr.Number(label="Polynomial Power",
                                                       value=DEFAULT_CONFIG["training"]["polynomial_power"])
                     save_interval_box = gr.Number(label=T["train_save_interval"],
                                                    value=DEFAULT_CONFIG["training"]["save_interval"])
@@ -566,7 +565,7 @@ def build_app_interface(selected_lang: str = "zh"):
 
                 with gr.Row():
                     with gr.Column(scale=1):
-                        train_progress = gr.HTML(label="Training Progress") # Label can be T["train_progress_label"]
+                        train_progress = gr.HTML(label="Training Progress")
                         train_log = gr.HTML(label=T["train_log"], elem_id="train-log-box")
                     with gr.Column(scale=2):
                         train_plot = gr.HTML(label=T["train_plot"]) # Changed from gr.Image
@@ -710,12 +709,10 @@ def build_app_interface(selected_lang: str = "zh"):
         ):
             empty_plot_html = generate_loss_chart_html([], [])
             try:
-                # Convert Number inputs safely (they might be float-like strings or actual numbers)
+                # Convert Number inputs safely
                 num_eval_seeds_int = int(float(num_eval_seeds_))
                 if not (0 <= num_eval_seeds_int <= 2**32 - 1):
                     raise ValueError("num_eval_seeds out of range")
-                # Add more specific validation for other numeric inputs if needed.
-                # int(float(val)) is a robust way to convert from gr.Number
             except ValueError as e:
                 yield (f"<div style='color:red;'>Configuration Error: {str(e)}</div>", str(e), empty_plot_html)
                 return
@@ -725,14 +722,12 @@ def build_app_interface(selected_lang: str = "zh"):
                 def safe_int(v, default_val): return default_val if v == "" or v is None else int(float(v))
                 def safe_float(v, default_val): return default_val if v == "" or v is None else float(v)
 
-                # Assuming train_model_generator is adapted to yield:
-                # (progress_html, log_text, (train_steps, train_losses, val_steps, val_losses)_or_None)
                 gen = train_model_generator(
                     data_dir=data_dir_,
                     out_dir=out_dir_,
                     plot_interval=safe_int(plot_interval_, defaults_train["plot_interval"]),
                     log_interval=safe_int(log_interval_, defaults_train["log_interval"]),
-                    num_eval_seeds=num_eval_seeds_int, # Already converted and validated
+                    num_eval_seeds=num_eval_seeds_int,
                     save_best_val_checkpoint=bool(save_best_val_ckpt_),
                     init_from=init_from_,
                     gradient_accumulation_steps=safe_int(grad_acc_, defaults_train["gradient_accumulation_steps"]),
@@ -852,7 +847,6 @@ def build_app_interface(selected_lang: str = "zh"):
             d_train = DEFAULT_CONFIG["training"]
             d_inf = DEFAULT_CONFIG["inference"]
             
-            # This list must match the `outputs` of model_dropdown.change and delete_model_btn.click
             return [
                 _b(True), _d("new_model"),      # new_model_chk, model_name_box
                 _d(), _d(),                     # data_dir_box (train), out_dir_box (train)
@@ -894,9 +888,7 @@ def build_app_interface(selected_lang: str = "zh"):
             icfg = dbm.get_inference_config(mid) or {}
             info = dbm.get_model_basic_info(mid) or {}
             name = info.get("name", "unknown_model") # Default name
-            
-            # Sanitize name for path or use ID for folder to be safer
-            # For now, assuming original name_mid logic is acceptable
+
             folder_name_part = "".join(c if c.isalnum() or c in ['_','-'] else '_' for c in name) # Basic sanitize
             folder = f"{folder_name_part}_{mid}"
 
@@ -1042,12 +1034,7 @@ def build_app_interface(selected_lang: str = "zh"):
         # ------------------------------------------------------------------ #
         def switch_language(lang_code: str):
             Tn = LANG_JSON[lang_code]
-            # List of all components that need label/value updates
-            # This must match the `outputs` of lang_select.change
-            # Note: Button text is updated with `value=...`
-            # Markdown needs `value=...`
-            # Tab labels are updated with `label=...`
-            # seed_box_inf was missing from the original outputs list for lang_select.change, adding it.
+
             return [
                 gr.update(label=Tn["language_label"], value=lang_code), # lang_select itself
                 # Tab labels
@@ -1076,9 +1063,8 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(label=Tn["train_beta1"]), gr.update(label=Tn["train_beta2"]),
                 gr.update(label=Tn["train_lr_scheduler"]),
                 gr.update(label=Tn["train_warmup_iters"]), gr.update(label=Tn["train_lr_decay_iters"]), gr.update(label=Tn["train_min_lr"]),
-                # Scheduler specific params also need label updates if they are translated (e.g., "Step Size")
-                # Assuming "Step Size", "Step Gamma", "Polynomial Power" are not in LANG_JSON for now.
-                # If they are, add them: gr.update(label=Tn["train_step_size"]) etc.
+                gr.update(label=Tn["train_step_size"]), gr.update(label=Tn["train_step_gamma"]),
+                gr.update(label=Tn["train_poly_power"]),
                 gr.update(label=Tn["train_save_interval"]),
                 gr.update(value=Tn["train_start_btn"]), gr.update(value=Tn["stop_btn"]),
                 gr.update(label=Tn["train_log"]), gr.update(label=Tn["train_plot"]),
@@ -1105,26 +1091,14 @@ def build_app_interface(selected_lang: str = "zh"):
             n_layer_box, n_head_box, n_embd_box,
             dropout_box, bias_box, lr_box, max_iters_box, weight_decay_box,
             beta1_box, beta2_box, lr_scheduler_box,
-            warmup_box, lr_decay_box, min_lr_box, # step_size, step_gamma, poly_power labels if translated
+            warmup_box, lr_decay_box, min_lr_box, step_size_box, step_gamma_box, polynomial_power_box,
             save_interval_box, train_btn, stop_btn,
             train_log, train_plot,
             data_dir_inf, out_dir_inf, prompt_box,
             num_samples_box, max_new_tokens_box, temperature_box, top_k_box,
-            seed_box_inf, # Added seed_box_inf
+            seed_box_inf,
             inf_btn, inf_output,
         ]
-        # Reconstruct switch_language return to match the full output list for lang_select.change
-        # The number of gr.update() calls in switch_language must match len(lang_select_outputs)
-        # Original code for switch_language did not update step_size_box etc. labels. Assuming they are not translated.
-        # Final items in lang_select_outputs were seed_box_inf, inf_btn, inf_output.
-        # switch_language needs to provide updates for all of them.
-
-        # Corrected switch_language to match the outputs list more closely
-        # The original switch_language was missing updates for some items in the original lang_select_outputs.
-        # For full correctness, ensure every component in lang_select_outputs gets a gr.update in switch_language.
-        # The provided switch_language updates many, but a 1-to-1 match is crucial.
-        # For brevity, I'll use the user's original switch_language outputs list, assuming it was mostly correct
-        # but noting that seed_box_inf was added to outputs and its label update to switch_language.
 
         lang_select.change(
             fn=switch_language,
@@ -1145,7 +1119,5 @@ def build_app_interface(selected_lang: str = "zh"):
 
 # ----------------- Launch -------------------
 if __name__ == "__main__":
-    # Ensure LANG_JSON is loaded correctly if build_app_interface is called directly
-    # It's loaded from src.config, so should be fine.
-    app = build_app_interface() # Default language (e.g. "zh")
+    app = build_app_interface()
     app.launch(server_name="0.0.0.0", server_port=7860, share=False)
