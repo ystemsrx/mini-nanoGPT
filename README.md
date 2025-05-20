@@ -74,8 +74,7 @@ Open your browser and visit the displayed link to see the training interface! (U
 - This way, you should be able to see two dynamically changing curves normally.
 - Click "Start Training" and wait for the model training to complete.
   
-![image](https://github.com/user-attachments/assets/61b1f55e-5a9e-45e4-af9e-0c58f8a2be7e)
-
+![image](https://github.com/user-attachments/assets/cc3584cd-8e80-469a-bcb8-dbabf2a5ef9f)
 
 #### Evaluation-Only Mode?
 - This mode allows you to evaluate the model's loss on the validation set. Set the `Number of Evaluation Seeds` to any value greater than 0 to enable evaluation-only mode. You can see the model's loss with different seeds.
