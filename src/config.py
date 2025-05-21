@@ -4,8 +4,10 @@ from multiprocessing import cpu_count
 import torch
 if torch.cuda.is_available():
     selected_device = "cuda"
+    selected_backend = "nccl"
 else:
     selected_device = "cpu"
+    selected_backend = "gloo"
 
 
 # Define the data type.
@@ -46,7 +48,7 @@ DEFAULT_CONFIG = {
         "step_size": 150,
         "step_gamma": 0.1,
         "polynomial_power": 2.0,
-        "backend": "nccl",
+        "backend": selected_backend,
         "device": selected_device,
         "dtype": "float16",
         "compile_model": False,

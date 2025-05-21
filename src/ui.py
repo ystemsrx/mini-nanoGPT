@@ -484,7 +484,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 with gr.Row():
                     data_dir_box = gr.Textbox(label=T["train_data_dir"], value="", interactive=False)
                     out_dir_box = gr.Textbox(label=T["train_out_dir"], value="", interactive=False)
-                    backend_box = gr.Textbox(label=T["train_backend"], value=DEFAULT_CONFIG["training"]["backend"])
+                    backend_box = gr.Dropdown(label=T["train_backend"], choices=["nccl", "gloo"], value=DEFAULT_CONFIG["training"]["backend"])
                     device_box = gr.Dropdown(label=T["train_device"], choices=["cpu", "cuda"],
                                              value=DEFAULT_CONFIG["training"]["device"])
                     dtype_box = gr.Dropdown(label=T["train_dtype"], choices=["float16", "bfloat16", "float32"],
