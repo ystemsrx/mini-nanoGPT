@@ -47,7 +47,7 @@ pip install -r requirements.txt
 
 ### 2. 启动项目
 ```bash
-python main.py
+python app.py
 ```
 打开浏览器访问显示的链接，就能看到训练界面了！（一般是 http://localhost:7860）
 
@@ -87,7 +87,7 @@ python main.py
 ## 📁 项目结构
 ```
 mini-nanogpt/
-├── main.py          # 启动程序
+├── app.py          # 启动程序
 ├── src/             # 配置文件以及其他模块
 ├── data/            # 数据存储
 ├── out/             # 模型权重

@@ -47,7 +47,7 @@ pip install -r requirements.txt
 
 ### 2. Launch the Project
 ```bash
-python main.py
+python app.py
 ```
 Open your browser and visit the displayed link to see the training interface! (Usually http://localhost:7860)
 
@@ -89,7 +89,7 @@ Open your browser and visit the displayed link to see the training interface! (U
 ## 📁 Project Structure
 ```
 mini-nanogpt/
-├── main.py          # Launch program
+├── app.py          # Launch program
 ├── src/             # Configuration files and other modules
 ├── data/            # Data storage
 ├── out/             # Model weights
