@@ -15,6 +15,16 @@ from src.gpt_model import GPTConfig, GPT
 
 dbm = DBManager()
 
+def safe_decode(decode_func, tokens, fallback_char=""):
+    """
+    安全解码函数，处理可能的解码错误
+    """
+    try:
+        return decode_func(tokens)
+    except Exception:
+        # 如果解码失败，返回fallback字符
+        return fallback_char
+
 def generate_text(
     data_dir,
     out_dir,
@@ -101,12 +111,70 @@ def generate_text(
         with open(meta_path, 'rb') as f:
             meta = pickle.load(f)
 
+        tokenizer_type = meta.get('tokenizer', 'character level')
         stoi, itos = meta['stoi'], meta['itos']
 
-        def encode(s):
-            return [stoi.get(ch, 0) for ch in s]
-        def decode(l):
-            return ''.join([itos.get(i, '') for i in l])
+        # 如果meta中有old2new映射，说明使用了tokenizer
+        if 'old2new' in meta:
+            old2new = meta['old2new']
+            new2old = {new: old for old, new in old2new.items()}
+
+            # 根据tokenizer类型选择不同的编解码方法
+            if tokenizer_type == 'custom_json':
+                try:
+                    from tokenizers import Tokenizer
+                    tokenizer_path = os.path.join(os.path.dirname(os.path.dirname(data_dir)), "assets/tokenizer.json")
+                    if os.path.exists(tokenizer_path):
+                        tokenizer = Tokenizer.from_file(tokenizer_path)
+
+                        def encode(s):
+                            ids = tokenizer.encode(s).ids
+                            # 原始ID映射到训练时使用的新ID
+                            return [old2new.get(id, 0) for id in ids if id in old2new]
+
+                        def decode(l):
+                            # 新ID映射回原始ID
+                            original_ids = [new2old.get(id, 0) for id in l]
+                            return safe_decode(tokenizer.decode, original_ids)
+                    else:
+                        # 找不到tokenizer文件，使用meta中的映射
+                        def encode(s):
+                            return [stoi.get(ch, 0) for ch in s]
+                        def decode(l):
+                            return ''.join([itos.get(i, '') for i in l])
+                except ImportError:
+                    # 找不到tokenizers库，使用meta中的映射
+                    def encode(s):
+                        return [stoi.get(ch, 0) for ch in s]
+                    def decode(l):
+                        return ''.join([itos.get(i, '') for i in l])
+
+            elif tokenizer_type == 'gpt2':
+                import tiktoken
+                enc = tiktoken.get_encoding("gpt2")
+
+                def encode(s):
+                    ids = enc.encode(s, allowed_special={"<|endoftext|>"})
+                    # 原始ID映射到训练时使用的新ID
+                    return [old2new.get(id, 0) for id in ids if id in old2new]
+
+                def decode(l):
+                    # 新ID映射回原始ID
+                    original_ids = [new2old.get(id, 0) for id in l]
+                    return safe_decode(enc.decode, original_ids)
+
+            else:
+                # 默认方式
+                def encode(s):
+                    return [stoi.get(ch, 0) for ch in s]
+                def decode(l):
+                    return ''.join([itos.get(i, '') for i in l])
+        else:
+            # 字符级编码（没有ID重映射）
+            def encode(s):
+                return [stoi.get(ch, 0) for ch in s]
+            def decode(l):
+                return ''.join([itos.get(i, '') for i in l])
 
         xids = torch.tensor(encode(prompt), dtype=torch.long, device=device)[None, ...]
         block_size = gptconf.block_size
@@ -122,17 +190,22 @@ def generate_text(
                     # 每个样本开始时输出标题
                     sample_header = f"Sample {s_i+1}:\n"
                     yield sample_header
-                    
+
                     idx = xids.clone()
                     # 先输出提示词部分
                     current_text = prompt
-                    prev_text = ""
+                    yield current_text
+                    
+                    # 用于存储当前样本的完整生成序列
+                    generated_tokens = []
+                    last_valid_text = prompt
+                    buffer_size = 5  # 缓冲区大小，用于处理多字节字符
                     
                     for token_i in range(max_new_tokens):
                         if idx.size(1) == 0:
                             yield "Can't generate an empty sequence."
                             return
-                            
+
                         idx_cond = idx[:, -block_size:]
                         logits, _ = model(idx_cond)
                         logits = logits[:, -1, :] / temperature
@@ -144,19 +217,44 @@ def generate_text(
                         idx_next = torch.multinomial(probs, num_samples=1)
                         idx = torch.cat((idx, idx_next), dim=1)
 
-                        # 解码当前生成的完整文本
-                        generated_tokens = idx[0].tolist()
-                        current_text = decode(generated_tokens)
-                        
-                        # 只输出新生成的部分（差量输出）
-                        new_text = current_text[len(prev_text):]
-                        yield new_text
-                        prev_text = current_text
-                    
-                    # 样本生成完毕，保存完整文本
-                    full_sample = f"{sample_header}{current_text}"
+                        # 将新生成的token添加到列表中
+                        new_token = idx_next[0].item()
+                        generated_tokens.append(new_token)
+
+                        # 尝试解码当前的token序列
+                        # 对于使用tokenizer的情况，使用缓冲策略
+                        if 'old2new' in meta and tokenizer_type in ['custom_json', 'gpt2']:
+                            # 每隔几个token或到达缓冲区大小时尝试解码
+                            if len(generated_tokens) % buffer_size == 0 or token_i == max_new_tokens - 1:
+                                # 解码完整的生成序列（包括prompt）
+                                full_tokens = idx[0].tolist()
+                                current_text = decode(full_tokens)
+                                
+                                # 只输出新增的有效部分
+                                if len(current_text) > len(last_valid_text):
+                                    new_text = current_text[len(last_valid_text):]
+                                    # 检查新文本是否包含乱码
+                                    if "�" not in new_text:
+                                        yield new_text
+                                        last_valid_text = current_text
+                        else:
+                            # 字符级编码，每个token都对应一个字符，可以直接解码
+                            current_text = decode(idx[0].tolist())
+                            new_text = current_text[len(last_valid_text):]
+                            yield new_text
+                            last_valid_text = current_text
+
+                    # 样本生成完毕，确保最后的内容被完整解码
+                    final_text = decode(idx[0].tolist())
+                    if len(final_text) > len(last_valid_text):
+                        remaining_text = final_text[len(last_valid_text):]
+                        if "�" not in remaining_text:
+                            yield remaining_text
+
+                    # 保存完整样本
+                    full_sample = f"{sample_header}{final_text}"
                     accumulated_output.append(full_sample)
-                    
+
                     # 样本之间添加分隔线
                     if s_i < num_samples - 1:
                         separator = "\n" + "-" * 30 + "\n"
