@@ -16,7 +16,7 @@ class DBManager:
     # ------------------------------------------------------------------ #
     # Initialization & Table Creation
     # ------------------------------------------------------------------ #
-    def __init__(self, db_path: str = "model_registry.db"):
+    def __init__(self, db_path: str = "assets/model_registry.db"):
         """
         Initialize the database connection and ensure all tables exist.
         """
