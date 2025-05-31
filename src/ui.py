@@ -577,7 +577,8 @@ def build_app_interface(selected_lang: str = "zh"):
                     out_dir_inf = gr.Textbox(label=T["inf_out_dir"], value="", interactive=False)
 
                 prompt_box = gr.Textbox(label=T["inf_prompt"],
-                                          value=DEFAULT_CONFIG["inference"]["prompt"], lines=5)
+                                          value=DEFAULT_CONFIG["inference"]["prompt"], lines=5,
+                                          placeholder="Just write something...")
 
                 with gr.Row():
                     num_samples_box = gr.Number(label=T["inf_num_samples"],
@@ -642,7 +643,8 @@ def build_app_interface(selected_lang: str = "zh"):
                 
                 # Shared prompt
                 comp_prompt = gr.Textbox(label=T["compare_shared_prompt"], lines=5, 
-                                         value=DEFAULT_CONFIG["inference"]["prompt"])
+                                         value=DEFAULT_CONFIG["inference"]["prompt"],
+                                         placeholder="Just write something...")
                 
                 # Generate button
                 comp_generate_btn = gr.Button(T["compare_generate_btn"])

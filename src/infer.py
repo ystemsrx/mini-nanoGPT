@@ -2,6 +2,7 @@
 import os
 import pickle
 from contextlib import nullcontext
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -126,21 +127,25 @@ def generate_text(
             if tokenizer_type == 'custom_json':
                 try:
                     from tokenizers import Tokenizer
-                    tokenizer_path = os.path.join(os.path.dirname(os.path.dirname(data_dir)), "assets/tokenizer.json")
+                    # 修改为与data_process.py相同的查找路径
+                    tokenizer_path = os.path.join(Path.cwd(), "assets/tokenizer.json")
                     if os.path.exists(tokenizer_path):
                         tokenizer = Tokenizer.from_file(tokenizer_path)
 
                         def encode(s):
+                            # 确保正确分词完整提示词
                             ids = tokenizer.encode(s).ids
-                            # 原始ID映射到训练时使用的新ID
+                            # 过滤并映射ID
                             return [old2new.get(id, 0) for id in ids if id in old2new]
 
                         def decode(l):
-                            # 新ID映射回原始ID
-                            original_ids = [new2old.get(id, 0) for id in l]
+                            # 确保正确反向映射所有token
+                            original_ids = [new2old.get(id, 0) for id in l if id in new2old]
                             return safe_decode(tokenizer.decode, original_ids)
                     else:
-                        # 找不到tokenizer文件，使用meta中的映射
+                        # 找不到tokenizer文件提示
+                        print(f"Warning: fail to find tokenizer file: {tokenizer_path}")
+                        # 使用meta中的映射
                         def encode(s):
                             return [stoi.get(ch, 0) for ch in s]
                         def decode(l):
@@ -179,7 +184,14 @@ def generate_text(
             def decode(l):
                 return ''.join([itos.get(i, '') for i in l])
 
-        xids = torch.tensor(encode(prompt), dtype=torch.long, device=device)[None, ...]
+        # 在生成前添加提示词分词验证
+        encoded_prompt = encode(prompt)
+        decoded_prompt = decode(encoded_prompt)
+        if decoded_prompt != prompt:
+            print(f"Warning: Prompt encoding/decoding mismatch. Original: '{prompt}', After encoding/decoding: '{decoded_prompt}'")
+            print(f"Number of tokens after encoding: {len(encoded_prompt)}")
+
+        xids = torch.tensor(encoded_prompt, dtype=torch.long, device=device)[None, ...]
         block_size = gptconf.block_size
         if xids.size(1) > block_size:
             yield f"Error: input length ({xids.size(1)}) exceeds block size ({block_size})."
@@ -227,19 +239,15 @@ def generate_text(
                         # 尝试解码当前的token序列
                         # 对于使用tokenizer的情况，使用缓冲策略
                         if 'old2new' in meta and tokenizer_type in ['custom_json', 'gpt2']:
-                            # 每隔几个token或到达缓冲区大小时尝试解码
-                            if len(generated_tokens) % buffer_size == 0 or token_i == max_new_tokens - 1:
-                                # 解码完整的生成序列（包括prompt）
-                                full_tokens = idx[0].tolist()
-                                current_text = decode(full_tokens)
-                                
-                                # 只输出新增的有效部分
-                                if len(current_text) > len(last_valid_text):
-                                    new_text = current_text[len(last_valid_text):]
-                                    # 检查新文本是否包含乱码
-                                    if " " not in new_text:
-                                        yield new_text
-                                        last_valid_text = current_text
+                            # 解码整个序列，不使用缓冲区
+                            full_tokens = idx[0].tolist()
+                            current_text = decode(full_tokens)
+                            
+                            # 只输出新增的有效部分
+                            if len(current_text) > len(last_valid_text):
+                                new_text = current_text[len(last_valid_text):]
+                                yield new_text
+                                last_valid_text = current_text
                         else:
                             # 字符级编码，每个token都对应一个字符，可以直接解码
                             current_text = decode(idx[0].tolist())
