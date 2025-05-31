@@ -1,5 +1,4 @@
 # src/infer.py
-
 import os
 import pickle
 from contextlib import nullcontext
@@ -101,7 +100,11 @@ def generate_text(
         model.eval()
         model.to(device)
         if compile_model:
-            model = torch.compile(model)
+            try:
+                model = torch.compile(model)
+            except Exception as e:
+                print(f"Warning: Model compilation failed: {str(e)}. Continuing without compilation.")
+                # Continue without compilation
 
         meta_path = os.path.join(data_dir, 'meta.pkl')
         if not os.path.exists(meta_path):
@@ -234,7 +237,7 @@ def generate_text(
                                 if len(current_text) > len(last_valid_text):
                                     new_text = current_text[len(last_valid_text):]
                                     # 检查新文本是否包含乱码
-                                    if "�" not in new_text:
+                                    if " " not in new_text:
                                         yield new_text
                                         last_valid_text = current_text
                         else:
@@ -248,7 +251,7 @@ def generate_text(
                     final_text = decode(idx[0].tolist())
                     if len(final_text) > len(last_valid_text):
                         remaining_text = final_text[len(last_valid_text):]
-                        if "�" not in remaining_text:
+                        if " " not in remaining_text:
                             yield remaining_text
 
                     # 保存完整样本

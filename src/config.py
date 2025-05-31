@@ -1,3 +1,4 @@
+# config.py
 import numpy as np
 from multiprocessing import cpu_count
 
@@ -65,7 +66,7 @@ DEFAULT_CONFIG = {
         "seed": 1024,
         "device": selected_device,
         "dtype": "float16",
-        "compile_model": True
+        "compile_model": False
     }
 }
 
@@ -77,6 +78,7 @@ LANG_JSON = {
         "data_process_tab": "Data Processing",
         "train_tab": "Training",
         "infer_tab": "Inference",
+        "compare_tab": "Comparison",
         "model_tab": "Model Management",
 
         "registered_models": "Registered Models",
@@ -158,7 +160,19 @@ LANG_JSON = {
         "model_id": "ID",
         "model_create_time": "Created",
         "model_update_time": "Updated",
-        "model_dir": "Directory"
+        "model_dir": "Directory",
+        
+        "compare_left_model": "Left",
+        "compare_right_model": "Right",
+        "compare_model_params": "Model Parameters",
+        "compare_loss_curve": "Loss Curve",
+        "compare_inference_history": "Inference History",
+        "compare_inference_playground": "Playground",
+        "compare_inference_params": "Inference Parameters",
+        "compare_generate_btn": "Generate",
+        "compare_shared_prompt": "Shared Prompt",
+        "compare_left_output": "Left Model Output",
+        "compare_right_output": "Right Model Output"
     },
     "zh": {
         "app_title": "Mini Nano GPT",
@@ -166,6 +180,7 @@ LANG_JSON = {
         "data_process_tab": "数据处理",
         "train_tab": "训练",
         "infer_tab": "推理",
+        "compare_tab": "对比",
         "model_tab": "模型管理",
 
         "registered_models": "已注册模型",
@@ -247,6 +262,18 @@ LANG_JSON = {
         "model_id": "ID",
         "model_create_time": "创建时间",
         "model_update_time": "更新时间",
-        "model_dir": "目录"
+        "model_dir": "目录",
+        
+        "compare_left_model": "左侧",
+        "compare_right_model": "右侧",
+        "compare_model_params": "模型参数 (Model Parameters)",
+        "compare_loss_curve": "损失曲线 (Loss Curve)",
+        "compare_inference_history": "推理历史",
+        "compare_inference_playground": "Playground",
+        "compare_inference_params": "推理参数",
+        "compare_generate_btn": "生成 (Generate)",
+        "compare_shared_prompt": "提示词 (Shared Prompt)",
+        "compare_left_output": "左侧模型输出",
+        "compare_right_output": "右侧模型输出"
     }
 }

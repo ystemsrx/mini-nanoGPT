@@ -594,6 +594,72 @@ def build_app_interface(selected_lang: str = "zh"):
                 inf_btn = gr.Button(T["inf_start_btn"])
                 inf_output = gr.Textbox(label=T["inf_result"], lines=10, interactive=False)
 
+            # -------------- Comparison Tab -------------- #
+            with gr.Tab(T["compare_tab"]) as comp_tab:
+                # Two-column layout for model comparison
+                with gr.Row():
+                    with gr.Column():
+                        comp_left_model = gr.Dropdown(label=T["compare_left_model"], choices=_get_model_choices_list(), value=None, interactive=True)
+                    with gr.Column():
+                        comp_right_model = gr.Dropdown(label=T["compare_right_model"], choices=_get_model_choices_list(), value=None, interactive=True)
+                
+                # Model parameters display
+                with gr.Row():
+                    with gr.Column():
+                        comp_left_params = gr.JSON(label=T["compare_model_params"], value={})
+                    with gr.Column():
+                        comp_right_params = gr.JSON(label=T["compare_model_params"], value={})
+                
+                # Loss curves
+                with gr.Row():
+                    with gr.Column():
+                        comp_left_plot = gr.HTML(label=T["compare_loss_curve"])
+                    with gr.Column():
+                        comp_right_plot = gr.HTML(label=T["compare_loss_curve"])
+                
+                # Inference history
+                with gr.Row():
+                    with gr.Column():
+                        comp_left_history = gr.Textbox(label=T["compare_inference_history"], lines=5)
+                    with gr.Column():
+                        comp_right_history = gr.Textbox(label=T["compare_inference_history"], lines=5)
+                
+                # Inference playground
+                gr.Markdown(f"### {T['compare_inference_playground']}")
+                
+                # Shared inference parameters
+                with gr.Row():
+                    comp_num_samples = gr.Number(label=T["inf_num_samples"], 
+                                                value=DEFAULT_CONFIG["inference"]["num_samples"])
+                    comp_max_tokens = gr.Number(label=T["inf_max_new_tokens"], 
+                                               value=DEFAULT_CONFIG["inference"]["max_new_tokens"])
+                    comp_temperature = gr.Number(label=T["inf_temperature"], 
+                                                value=DEFAULT_CONFIG["inference"]["temperature"])
+                    comp_top_k = gr.Number(label=T["inf_top_k"], 
+                                          value=DEFAULT_CONFIG["inference"]["top_k"])
+                    comp_seed = gr.Number(label=T["inf_seed"], 
+                                         value=DEFAULT_CONFIG["inference"]["seed"])
+                
+                # Shared prompt
+                comp_prompt = gr.Textbox(label=T["compare_shared_prompt"], lines=5, 
+                                         value=DEFAULT_CONFIG["inference"]["prompt"])
+                
+                # Generate button
+                comp_generate_btn = gr.Button(T["compare_generate_btn"])
+                
+                # Output display
+                with gr.Row():
+                    with gr.Column():
+                        comp_left_output = gr.Textbox(label=T["compare_left_output"], lines=10)
+                    with gr.Column():
+                        comp_right_output = gr.Textbox(label=T["compare_right_output"], lines=10)
+                
+                # Hidden fields to store model data paths
+                comp_left_data_dir = gr.Textbox(visible=False)
+                comp_left_out_dir = gr.Textbox(visible=False)
+                comp_right_data_dir = gr.Textbox(visible=False)
+                comp_right_out_dir = gr.Textbox(visible=False)
+
         # ------------------------------------------------------------------ #
         # Call backs: data processing / training / inference
         # ------------------------------------------------------------------ #
@@ -629,16 +695,17 @@ def build_app_interface(selected_lang: str = "zh"):
                     f"train_size = {info['train_size']}" +
                     (f"\nval_size = {info['val_size']}" if 'val_size' in info else "\n(no val)")
                 )
-                return msg, gr.update(choices=new_choices, value=new_val)
+                # 同时更新主下拉框和对比页面的两个下拉框
+                return msg, gr.update(choices=new_choices, value=new_val), gr.update(choices=new_choices), gr.update(choices=new_choices)
             except Exception as e:
-                return f"❌ Error: {str(e)}", gr.update()
+                return f"❌ Error: {str(e)}", gr.update(), gr.update(), gr.update()
 
         process_btn.click(
             fn=data_processing_cb,
             inputs=[new_model_chk, model_name_box, model_dropdown,
                     input_text, txt_dir,
                     train_split, no_val_set, use_gpt2, num_proc],
-            outputs=[process_output, model_dropdown]
+            outputs=[process_output, model_dropdown, comp_left_model, comp_right_model]
         )
 
         stop_btn.click(fn=stop_training, inputs=[], outputs=[])
@@ -847,7 +914,8 @@ def build_app_interface(selected_lang: str = "zh"):
             d_train = DEFAULT_CONFIG["training"]
             d_inf = DEFAULT_CONFIG["inference"]
             
-            return [
+            # 原始的返回值
+            base_updates = [
                 _b(True), _d("new_model"),      # new_model_chk, model_name_box
                 _d(), _d(),                     # data_dir_box (train), out_dir_box (train)
                 _d(d_train["plot_interval"]), _d(d_train["log_interval"]),
@@ -875,6 +943,29 @@ def build_app_interface(selected_lang: str = "zh"):
                 _d(d_inf["seed"]), # seed_box_inf
                 ""                 # inf_output
             ]
+            
+            # 对比页面组件的重置
+            comparison_updates = [
+                gr.update(), # comp_left_model (不重置)
+                gr.update(), # comp_right_model (不重置)
+                gr.update(value={}), # comp_left_params
+                gr.update(value={}), # comp_right_params
+                gr.update(value=generate_loss_chart_html([], [])), # comp_left_plot
+                gr.update(value=generate_loss_chart_html([], [])), # comp_right_plot
+                gr.update(value=""), # comp_left_history
+                gr.update(value=""), # comp_right_history
+                _d(d_inf["num_samples"]), # comp_num_samples
+                _d(d_inf["max_new_tokens"]), # comp_max_tokens
+                _d(d_inf["temperature"]), # comp_temperature
+                _d(d_inf["top_k"]), # comp_top_k
+                _d(d_inf["seed"]), # comp_seed
+                _d(d_inf["prompt"]), # comp_prompt
+                gr.update(), # comp_generate_btn (不重置)
+                gr.update(value=""), # comp_left_output
+                gr.update(value="")  # comp_right_output
+            ]
+            
+            return base_updates + comparison_updates
 
         def select_model_cb(sel: str):
             if not sel:
@@ -931,7 +1022,10 @@ def build_app_interface(selected_lang: str = "zh"):
             d_train_defaults = DEFAULT_CONFIG["training"]
             d_inf_defaults = DEFAULT_CONFIG["inference"]
 
-            updates_list = [
+            inference_history = dbm.get_inference_history(mid) or ""
+            
+            # 基本组件更新列表
+            base_updates = [
                 gr.update(value=False),  # new_model_chk
                 gr.update(value=name),   # model_name_box
                 gr.update(value=data_processed_dir), # data_dir_box (train tab)
@@ -977,9 +1071,32 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(value=_ic("temperature", d_inf_defaults["temperature"])),
                 gr.update(value=_ic("top_k", d_inf_defaults["top_k"])),
                 gr.update(value=_ic("seed", d_inf_defaults["seed"])), # seed_box_inf
-                dbm.get_inference_history(mid) or "" # inf_output
+                inference_history # inf_output
             ]
-            return updates_list
+            
+            # 对比页面组件更新
+            # 注意：我们不直接更新左右模型选择框，让用户自己控制
+            comparison_updates = [
+                gr.update(), # comp_left_model (不更新)
+                gr.update(), # comp_right_model (不更新)
+                gr.update(), # comp_left_params (不更新)
+                gr.update(), # comp_right_params (不更新)
+                gr.update(), # comp_left_plot (不更新)
+                gr.update(), # comp_right_plot (不更新)
+                gr.update(), # comp_left_history (不更新)
+                gr.update(), # comp_right_history (不更新)
+                gr.update(value=_ic("num_samples", d_inf_defaults["num_samples"])), # comp_num_samples
+                gr.update(value=_ic("max_new_tokens", d_inf_defaults["max_new_tokens"])), # comp_max_tokens
+                gr.update(value=_ic("temperature", d_inf_defaults["temperature"])), # comp_temperature
+                gr.update(value=_ic("top_k", d_inf_defaults["top_k"])), # comp_top_k
+                gr.update(value=_ic("seed", d_inf_defaults["seed"])), # comp_seed
+                gr.update(value=_ic("prompt", d_inf_defaults["prompt"])), # comp_prompt
+                gr.update(), # comp_generate_btn (不更新)
+                gr.update(), # comp_left_output (不更新)
+                gr.update()  # comp_right_output (不更新)
+            ]
+            
+            return base_updates + comparison_updates
 
         outputs_for_model_select_and_delete = [
             new_model_chk, model_name_box,
@@ -1000,7 +1117,16 @@ def build_app_interface(selected_lang: str = "zh"):
             data_dir_inf, out_dir_inf,
             prompt_box, num_samples_box, max_new_tokens_box,
             temperature_box, top_k_box, seed_box_inf,
-            inf_output
+            inf_output,
+            # 添加对比页面组件
+            comp_left_model, comp_right_model,
+            comp_left_params, comp_right_params,
+            comp_left_plot, comp_right_plot,
+            comp_left_history, comp_right_history,
+            comp_num_samples, comp_max_tokens,
+            comp_temperature, comp_top_k, comp_seed,
+            comp_prompt, comp_generate_btn,
+            comp_left_output, comp_right_output
         ]
         model_dropdown.change(
             fn=select_model_cb,
@@ -1027,18 +1153,22 @@ def build_app_interface(selected_lang: str = "zh"):
             outputs=[model_dropdown] + outputs_for_model_select_and_delete 
         )
 
-        refresh_models_btn.click(lambda: gr.update(choices=_get_model_choices_list()), [], [model_dropdown])
+        refresh_models_btn.click(
+            lambda: [gr.update(choices=_get_model_choices_list()) for _ in range(3)],
+            [],
+            [model_dropdown, comp_left_model, comp_right_model]
+        )
 
         # ------------------------------------------------------------------ #
         # Call backs: language switch
         # ------------------------------------------------------------------ #
         def switch_language(lang_code: str):
             Tn = LANG_JSON[lang_code]
-
+            
             return [
                 gr.update(label=Tn["language_label"], value=lang_code), # lang_select itself
                 # Tab labels
-                gr.update(label=Tn["data_process_tab"]), gr.update(label=Tn["train_tab"]), gr.update(label=Tn["infer_tab"]),
+                gr.update(label=Tn["data_process_tab"]), gr.update(label=Tn["train_tab"]), gr.update(label=Tn["infer_tab"]), gr.update(label=Tn["compare_tab"]),
                 # Top bar
                 gr.update(label=Tn["registered_models"]), gr.update(value=Tn["refresh_tables"]), gr.update(value=Tn["delete_selected_model"]),
                 # Model management (Data Processing Tab)
@@ -1074,11 +1204,20 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(label=Tn["inf_max_new_tokens"]), gr.update(label=Tn["inf_temperature"]),
                 gr.update(label=Tn["inf_top_k"]), gr.update(label=Tn["inf_seed"]), # seed_box_inf label
                 gr.update(value=Tn["inf_start_btn"]), gr.update(label=Tn["inf_result"]),
+                # Comparison tab
+                gr.update(label=Tn["compare_left_model"]), gr.update(label=Tn["compare_right_model"]),
+                gr.update(label=Tn["compare_model_params"]), gr.update(label=Tn["compare_model_params"]),
+                gr.update(label=Tn["compare_loss_curve"]), gr.update(label=Tn["compare_loss_curve"]),
+                gr.update(label=Tn["compare_inference_history"]), gr.update(label=Tn["compare_inference_history"]),
+                gr.update(label=Tn["inf_num_samples"]), gr.update(label=Tn["inf_max_new_tokens"]), 
+                gr.update(label=Tn["inf_temperature"]), gr.update(label=Tn["inf_top_k"]), gr.update(label=Tn["inf_seed"]),
+                gr.update(label=Tn["compare_shared_prompt"]), gr.update(value=Tn["compare_generate_btn"]),
+                gr.update(label=Tn["compare_left_output"]), gr.update(label=Tn["compare_right_output"])
             ]
 
         lang_select_outputs = [
             lang_select,
-            data_process_tab, train_tab, inf_tab,
+            data_process_tab, train_tab, inf_tab, comp_tab,
             model_dropdown, refresh_models_btn, delete_model_btn,
             new_model_chk, model_name_box,
             input_text, txt_dir, no_val_set, use_gpt2,
@@ -1098,6 +1237,15 @@ def build_app_interface(selected_lang: str = "zh"):
             num_samples_box, max_new_tokens_box, temperature_box, top_k_box,
             seed_box_inf,
             inf_btn, inf_output,
+            # Comparison tab components
+            comp_left_model, comp_right_model,
+            comp_left_params, comp_right_params,
+            comp_left_plot, comp_right_plot,
+            comp_left_history, comp_right_history,
+            comp_num_samples, comp_max_tokens, 
+            comp_temperature, comp_top_k, comp_seed,
+            comp_prompt, comp_generate_btn,
+            comp_left_output, comp_right_output
         ]
 
         lang_select.change(
@@ -1114,6 +1262,170 @@ def build_app_interface(selected_lang: str = "zh"):
                 warmup_box, lr_decay_box, min_lr_box,
                 step_size_box, step_gamma_box, polynomial_power_box
             ]
+        )
+        
+        # ------------------------------------------------------------------ #
+        # Call backs: comparison page
+        # ------------------------------------------------------------------ #
+        def select_model_for_comparison_cb(sel: str, is_left: bool):
+            """
+            Select model for comparison (left or right side)
+            """
+            if not sel:
+                return [{}, generate_loss_chart_html([], []), "", "", ""] if is_left else [{}, generate_loss_chart_html([], []), "", ""]
+            
+            try:
+                mid = int(sel.split(" - ")[0])
+            except ValueError:
+                return [{}, generate_loss_chart_html([], []), "", "", ""] if is_left else [{}, generate_loss_chart_html([], []), "", ""]
+            
+            # Get model info
+            cfg = dbm.get_training_config(mid) or {}
+            icfg = dbm.get_inference_config(mid) or {}
+            info = dbm.get_model_basic_info(mid) or {}
+            name = info.get("name", "unknown_model")
+            
+            # Prepare directories
+            folder_name_part = "".join(c if c.isalnum() or c in ['_','-'] else '_' for c in name)
+            folder = f"{folder_name_part}_{mid}"
+            data_processed_dir = os.path.join("data", folder, "processed")
+            out_dir_root = os.path.join("out", folder)
+
+            # Generate loss curve
+            loss_log_path = dbm.get_training_log_path(mid)
+            loss_plot_html_content = _create_plot_html_from_log(loss_log_path)
+            
+            # Get inference history if any
+            inference_history = dbm.get_inference_history(mid) or ""
+            
+            # Create parameter display dictionary - only include the most important parameters
+            display_params = {}
+            if cfg:
+                try:
+                    display_params = {
+                        "Model Structure": {
+                            "layers": cfg.get("n_layer"),
+                            "heads": cfg.get("n_head"),
+                            "embedding_dim": cfg.get("n_embd"),
+                            "block_size": cfg.get("block_size"),
+                            "dropout": cfg.get("dropout"),
+                            "bias": cfg.get("bias")
+                        },
+                        "Training": {
+                            "learning_rate": cfg.get("learning_rate"),
+                            "batch_size": cfg.get("batch_size"),
+                            "iterations": cfg.get("max_iters"),
+                            "scheduler": cfg.get("lr_scheduler_type")
+                        }
+                    }
+                except Exception as e:
+                    print(f"Error formatting parameters: {e}")
+            
+            if is_left:
+                return [display_params, loss_plot_html_content, inference_history, data_processed_dir, out_dir_root]
+            else:
+                return [display_params, loss_plot_html_content, inference_history, data_processed_dir, out_dir_root]
+        
+        # Left model selection
+        comp_left_model.change(
+            fn=lambda sel: select_model_for_comparison_cb(sel, True),
+            inputs=[comp_left_model],
+            outputs=[comp_left_params, comp_left_plot, comp_left_history, comp_left_data_dir, comp_left_out_dir]
+        )
+        
+        # Right model selection
+        comp_right_model.change(
+            fn=lambda sel: select_model_for_comparison_cb(sel, False),
+            inputs=[comp_right_model],
+            outputs=[comp_right_params, comp_right_plot, comp_right_history, comp_right_data_dir, comp_right_out_dir]
+        )
+        
+        def dual_inference_cb(
+            left_data_dir, left_out_dir,
+            right_data_dir, right_out_dir,
+            prompt,
+            num_samples, max_tokens, temperature, top_k, seed
+        ):
+            """
+            Run inference on both models simultaneously
+            """
+            if not left_out_dir or not right_out_dir:
+                return "Please select both models first.", "Please select both models first."
+            
+            if not prompt.strip():
+                return "Prompt is empty, please provide a starting text.", "Prompt is empty, please provide a starting text."
+            
+            # Start with empty outputs
+            left_output = ""
+            right_output = ""
+            
+            # Common parameters for both models
+            try:
+                num_samples_int = int(float(num_samples))
+                max_tokens_int = int(float(max_tokens))
+                temperature_float = float(temperature)
+                top_k_int = int(float(top_k)) if top_k is not None and str(top_k).strip() != "" else None
+                seed_int = int(float(seed))
+                
+                # Generate text for left model
+                try:
+                    left_gen = generate_text(
+                        data_dir=left_data_dir,
+                        out_dir=left_out_dir,
+                        prompt=prompt,
+                        num_samples=num_samples_int,
+                        max_new_tokens=max_tokens_int,
+                        temperature=temperature_float,
+                        top_k=top_k_int,
+                        seed=seed_int,
+                        device=DEFAULT_CONFIG["inference"]["device"],
+                        dtype=DEFAULT_CONFIG["inference"]["dtype"],
+                        compile_model=False  # 禁用编译以避免Triton错误
+                    )
+                    
+                    for piece in left_gen:
+                        left_output += piece
+                        yield left_output, right_output
+                except Exception as e:
+                    left_output = f"Error with left model: {str(e)}"
+                    yield left_output, right_output
+                
+                # Generate text for right model
+                try:
+                    right_gen = generate_text(
+                        data_dir=right_data_dir,
+                        out_dir=right_out_dir,
+                        prompt=prompt,
+                        num_samples=num_samples_int,
+                        max_new_tokens=max_tokens_int,
+                        temperature=temperature_float,
+                        top_k=top_k_int,
+                        seed=seed_int,
+                        device=DEFAULT_CONFIG["inference"]["device"],
+                        dtype=DEFAULT_CONFIG["inference"]["dtype"],
+                        compile_model=False  # 禁用编译以避免Triton错误
+                    )
+                    
+                    for piece in right_gen:
+                        right_output += piece
+                        yield left_output, right_output
+                except Exception as e:
+                    right_output = f"Error with right model: {str(e)}"
+                    yield left_output, right_output
+                
+            except Exception as e:
+                yield f"Parameter error: {str(e)}", f"Parameter error: {str(e)}"
+        
+        # Connect the generate button to the dual inference callback
+        comp_generate_btn.click(
+            fn=dual_inference_cb,
+            inputs=[
+                comp_left_data_dir, comp_left_out_dir,
+                comp_right_data_dir, comp_right_out_dir,
+                comp_prompt,
+                comp_num_samples, comp_max_tokens, comp_temperature, comp_top_k, comp_seed
+            ],
+            outputs=[comp_left_output, comp_right_output]
         )
     return demo
 
