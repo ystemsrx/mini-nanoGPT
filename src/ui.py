@@ -715,7 +715,10 @@ def build_app_interface(selected_lang: str = "zh"):
         # -----------------------------
         def update_lr_scheduler_params(scheduler_type):
             defaults_train = DEFAULT_CONFIG["training"]
-            warmup_update = gr.update(interactive=False, value="") # Use default if not interactive
+            
+            # 初始化所有组件为非交互状态，视觉上显示为空白（但实际值保留为默认值）
+            # 注意：这里使用空字符串作为显示值，但实际值会保留在后端
+            warmup_update = gr.update(interactive=False, value="") 
             lr_decay_update = gr.update(interactive=False, value="")
             min_lr_update = gr.update(interactive=False, value="")
             step_size_update = gr.update(interactive=False, value="")
@@ -723,8 +726,9 @@ def build_app_interface(selected_lang: str = "zh"):
             polynomial_power_update = gr.update(interactive=False, value="")
             
             if scheduler_type == "none":
-                pass # All remain non-interactive and empty/default
+                pass # 所有参数保持非交互状态
             elif scheduler_type == "cosine":
+                # 启用相关参数并设置其值
                 warmup_update = gr.update(interactive=True, value=defaults_train["warmup_iters"])
                 lr_decay_update = gr.update(interactive=True, value=defaults_train["lr_decay_iters"])
                 min_lr_update = gr.update(interactive=True, value=defaults_train["min_lr"])
@@ -914,6 +918,10 @@ def build_app_interface(selected_lang: str = "zh"):
             d_train = DEFAULT_CONFIG["training"]
             d_inf = DEFAULT_CONFIG["inference"]
             
+            # 获取默认学习率调度器类型的相关组件状态
+            default_scheduler = d_train["lr_scheduler_type"]
+            warmup_update, lr_decay_update, min_lr_update, step_size_update, step_gamma_update, polynomial_power_update = update_lr_scheduler_params(default_scheduler)
+            
             # 原始的返回值
             base_updates = [
                 _b(True), _d("new_model"),      # new_model_chk, model_name_box
@@ -928,9 +936,14 @@ def build_app_interface(selected_lang: str = "zh"):
                 _d(d_train["dropout"]), _b(d_train["bias"]),
                 _d(d_train["learning_rate"]), _d(d_train["max_iters"]), _d(d_train["weight_decay"]),
                 _d(d_train["beta1"]), _d(d_train["beta2"]),
-                _d(d_train["lr_scheduler_type"]), # This will trigger update_lr_scheduler_params if changed
-                _d(d_train["warmup_iters"]), _d(d_train["lr_decay_iters"]), _d(d_train["min_lr"]),
-                _d(d_train["step_size"]), _d(d_train["step_gamma"]),_d(d_train["polynomial_power"]),
+                _d(d_train["lr_scheduler_type"]), # 设置默认学习率调度器类型
+                # 使用update_lr_scheduler_params的返回值而不是直接设置
+                warmup_update,  # warmup_box
+                lr_decay_update, # lr_decay_box
+                min_lr_update,  # min_lr_box
+                step_size_update, # step_size_box
+                step_gamma_update, # step_gamma_box
+                polynomial_power_update, # polynomial_power_box
                 _d(d_train["backend"]), _d(d_train["device"]), _d(d_train["dtype"]),
                 _b(d_train["compile_model"]),
                 _d(d_train["seed"]), _d(d_train["save_interval"]),
@@ -1024,6 +1037,12 @@ def build_app_interface(selected_lang: str = "zh"):
 
             inference_history = dbm.get_inference_history(mid) or ""
             
+            # 获取模型的学习率调度器类型
+            scheduler_type = _cfg("lr_scheduler_type", d_train_defaults["lr_scheduler_type"])
+            
+            # 根据学习率调度器类型更新相关组件状态
+            warmup_update, lr_decay_update, min_lr_update, step_size_update, step_gamma_update, polynomial_power_update = update_lr_scheduler_params(scheduler_type)
+            
             # 基本组件更新列表
             base_updates = [
                 gr.update(value=False),  # new_model_chk
@@ -1048,13 +1067,14 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(value=_cfg("weight_decay", d_train_defaults["weight_decay"])),
                 gr.update(value=_cfg("beta1", d_train_defaults["beta1"])),
                 gr.update(value=_cfg("beta2", d_train_defaults["beta2"])),
-                gr.update(value=_cfg("lr_scheduler_type", d_train_defaults["lr_scheduler_type"])),
-                gr.update(value=_cfg("warmup_iters", d_train_defaults["warmup_iters"])),
-                gr.update(value=_cfg("lr_decay_iters", d_train_defaults["lr_decay_iters"])),
-                gr.update(value=_cfg("min_lr", d_train_defaults["min_lr"])),
-                gr.update(value=_cfg("step_size", d_train_defaults["step_size"])),
-                gr.update(value=_cfg("step_gamma", d_train_defaults["step_gamma"])),
-                gr.update(value=_cfg("polynomial_power", d_train_defaults["polynomial_power"])),
+                gr.update(value=scheduler_type), # 设置学习率调度器类型
+                # 根据学习率调度器类型，设置相关组件的值和交互状态
+                warmup_update,  # warmup_box
+                lr_decay_update, # lr_decay_box
+                min_lr_update,  # min_lr_box
+                step_size_update, # step_size_box
+                step_gamma_update, # step_gamma_box
+                polynomial_power_update, # polynomial_power_box
                 gr.update(value=_cfg("backend", d_train_defaults["backend"])),
                 gr.update(value=_cfg("device", d_train_defaults["device"])),
                 gr.update(value=_cfg("dtype", d_train_defaults["dtype"])),
@@ -1256,12 +1276,24 @@ def build_app_interface(selected_lang: str = "zh"):
 
         # Initialize LR scheduler params display logic on app load
         demo.load(
-            fn=lambda scheduler_type=DEFAULT_CONFIG["training"]["lr_scheduler_type"]: update_lr_scheduler_params(scheduler_type),
-            inputs=None, # No explicit inputs, uses default from fn signature
+            fn=lambda: update_lr_scheduler_params(DEFAULT_CONFIG["training"]["lr_scheduler_type"]),
+            inputs=None,
             outputs=[
                 warmup_box, lr_decay_box, min_lr_box,
                 step_size_box, step_gamma_box, polynomial_power_box
-            ]
+            ],
+            queue=False
+        )
+        
+        # 保留这个事件绑定，确保用户手动切换学习率调度器类型时也更新相关组件
+        lr_scheduler_box.change(
+            fn=update_lr_scheduler_params,
+            inputs=[lr_scheduler_box],
+            outputs=[
+                warmup_box, lr_decay_box, min_lr_box,
+                step_size_box, step_gamma_box, polynomial_power_box
+            ],
+            queue=False
         )
         
         # ------------------------------------------------------------------ #
