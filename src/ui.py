@@ -1337,7 +1337,7 @@ def build_app_interface(selected_lang: str = "zh"):
             queue=False
         )
         
-        # 保留这个事件绑定，确保用户手动切换学习率调度器类型时也更新相关组件
+        # 手动切换学习率调度器类型时也更新相关组件
         lr_scheduler_box.change(
             fn=update_lr_scheduler_params,
             inputs=[lr_scheduler_box],
@@ -1435,17 +1435,17 @@ def build_app_interface(selected_lang: str = "zh"):
             Run inference on both models simultaneously with different parameters
             """
             if not left_out_dir or not right_out_dir:
-                return "请先选择两个模型。", "请先选择两个模型。"
+                return "Please select two models first.", "Please select two models first."
             
             if not prompt.strip():
-                return "提示词为空，请输入起始文本。", "提示词为空，请输入起始文本。"
+                return "Prompt is empty, please enter starting text.", "Prompt is empty, please enter starting text."
             
             # Start with empty outputs
             left_output = ""
             right_output = ""
             
             try:
-                # 转换左侧模型参数
+                # Convert left model parameters
                 try:
                     left_num_samples_int = int(float(left_num_samples))
                     left_max_tokens_int = int(float(left_max_tokens))
@@ -1453,11 +1453,11 @@ def build_app_interface(selected_lang: str = "zh"):
                     left_top_k_int = int(float(left_top_k)) if left_top_k is not None and str(left_top_k).strip() != "" else None
                     left_seed_int = int(float(left_seed))
                 except ValueError as e:
-                    left_output = f"左侧模型参数错误: {str(e)}"
+                    left_output = f"Left model parameter error: {str(e)}"
                     yield left_output, right_output
                     return
                     
-                # 转换右侧模型参数
+                # Convert right model parameters
                 try:
                     right_num_samples_int = int(float(right_num_samples))
                     right_max_tokens_int = int(float(right_max_tokens))
@@ -1465,7 +1465,7 @@ def build_app_interface(selected_lang: str = "zh"):
                     right_top_k_int = int(float(right_top_k)) if right_top_k is not None and str(right_top_k).strip() != "" else None
                     right_seed_int = int(float(right_seed))
                 except ValueError as e:
-                    right_output = f"右侧模型参数错误: {str(e)}"
+                    right_output = f"Right model parameter error: {str(e)}"
                     yield left_output, right_output
                     return
                 
@@ -1482,14 +1482,14 @@ def build_app_interface(selected_lang: str = "zh"):
                         seed=left_seed_int,
                         device=DEFAULT_CONFIG["inference"]["device"],
                         dtype=DEFAULT_CONFIG["inference"]["dtype"],
-                        compile_model=False  # 禁用编译以避免Triton错误
+                        compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
                     )
                     
                     for piece in left_gen:
                         left_output += piece
                         yield left_output, right_output
                 except Exception as e:
-                    left_output = f"左侧模型生成错误: {str(e)}"
+                    left_output = f"Left model generation error: {str(e)}"
                     yield left_output, right_output
                 
                 # Generate text for right model
@@ -1505,18 +1505,18 @@ def build_app_interface(selected_lang: str = "zh"):
                         seed=right_seed_int,
                         device=DEFAULT_CONFIG["inference"]["device"],
                         dtype=DEFAULT_CONFIG["inference"]["dtype"],
-                        compile_model=False  # 禁用编译以避免Triton错误
+                        compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
                     )
                     
                     for piece in right_gen:
                         right_output += piece
                         yield left_output, right_output
                 except Exception as e:
-                    right_output = f"右侧模型生成错误: {str(e)}"
+                    right_output = f"Left model generation error: {str(e)}"
                     yield left_output, right_output
                 
             except Exception as e:
-                yield f"参数错误: {str(e)}", f"参数错误: {str(e)}"
+                yield f"Error: {str(e)}", f"Error: {str(e)}"
         
         # Connect the generate button to the dual inference callback
         comp_generate_btn.click(
