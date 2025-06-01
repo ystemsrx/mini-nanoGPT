@@ -70,8 +70,8 @@ DEFAULT_CONFIG = {
     "inference": {
         "out_dir": "out",
         "prompt": "",
-        "num_samples": 1,
-        "max_new_tokens": 50,
+        "num_samples": 3,
+        "max_new_tokens": 64,
         "temperature": 0.7,
         "top_k": 50,
         "seed": 1024,

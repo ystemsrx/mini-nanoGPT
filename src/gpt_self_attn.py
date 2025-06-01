@@ -8,7 +8,7 @@ from typing import Optional
 
 class RoPE(nn.Module):
     """Rotary Position Embedding (RoPE)"""
-    def __init__(self, dim, max_seq_len, base=10000):
+    def __init__(self, dim, max_seq_len, base):
         super().__init__()
         self.dim = dim
         self.max_seq_len = max_seq_len

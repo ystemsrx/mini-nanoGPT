@@ -14,6 +14,9 @@ from src.data_process import process_data
 from src.train import train_model_generator, stop_training
 from src.infer import generate_text
 
+import threading
+import queue
+
 dbm = DBManager()
 
 # --- SVG Chart Generation Function ---
@@ -746,9 +749,8 @@ def build_app_interface(selected_lang: str = "zh"):
                 comp_right_data_dir = gr.Textbox(visible=False)
                 comp_right_out_dir = gr.Textbox(visible=False)
 
-        # ------------------------------------------------------------------ #
+        # ------------------------------------------------------------------
         # Call backs: data processing / training / inference
-        # ------------------------------------------------------------------ #
         def data_processing_cb(
             new_flag, model_name, dropdown_val,
             txt, ddir,
@@ -1010,9 +1012,8 @@ def build_app_interface(selected_lang: str = "zh"):
             outputs=[train_progress, train_log, train_plot]
         )
 
-        # ------------------------------------------------------------------ #
+        # ------------------------------------------------------------------
         # Call backs: inference
-        # ------------------------------------------------------------------ #
         def inference_cb(
             data_dir_inf_, out_dir_inf_,
             prompt_, num_samples_, max_new_tokens_,
@@ -1056,9 +1057,8 @@ def build_app_interface(selected_lang: str = "zh"):
             outputs=inf_output
         )
 
-        # ------------------------------------------------------------------ #
+        # ------------------------------------------------------------------
         # Call backs: model selection, reset, delete
-        # ------------------------------------------------------------------ #
         def _reset_updates():
             def _d(val=""): return gr.update(value=val)
             def _b(val=False): return gr.update(value=val) # For boolean checkboxes
@@ -1122,8 +1122,8 @@ def build_app_interface(selected_lang: str = "zh"):
             
             # 对比页面组件的重置
             comparison_updates = [
-                gr.update(), # comp_left_model (不重置)
-                gr.update(), # comp_right_model (不重置)
+                gr.update(), # comp_left_model
+                gr.update(), # comp_right_model
                 gr.update(value={}), # comp_left_params
                 gr.update(value={}), # comp_right_params
                 gr.update(value=generate_loss_chart_html([], [])), # comp_left_plot
@@ -1276,21 +1276,20 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(value=_ic("temperature", d_inf_defaults["temperature"])),
                 gr.update(value=_ic("top_k", d_inf_defaults["top_k"])),
                 gr.update(value=_ic("seed", d_inf_defaults["seed"])), # seed_box_inf
-                gr.update(), # inf_btn (添加缺失的组件)
+                gr.update(), # inf_btn
                 inference_history # inf_output
             ]
             
-            # 对比页面组件更新
-            # 注意：我们不直接更新左右模型选择框，让用户自己控制
+            # 对比页面组件更新，但不直接更新左右模型选择框，自选
             comparison_updates = [
-                gr.update(), # comp_left_model (不更新)
-                gr.update(), # comp_right_model (不更新)
-                gr.update(), # comp_left_params (不更新)
-                gr.update(), # comp_right_params (不更新)
-                gr.update(), # comp_left_plot (不更新)
-                gr.update(), # comp_right_plot (不更新)
-                gr.update(), # comp_left_history (不更新)
-                gr.update(), # comp_right_history (不更新)
+                gr.update(), # comp_left_model
+                gr.update(), # comp_right_model
+                gr.update(), # comp_left_params
+                gr.update(), # comp_right_params
+                gr.update(), # comp_left_plot
+                gr.update(), # comp_right_plot
+                gr.update(), # comp_left_history
+                gr.update(), # comp_right_history
                 # 左侧模型参数
                 gr.update(value=_ic("num_samples", d_inf_defaults["num_samples"])), # comp_left_num_samples
                 gr.update(value=_ic("max_new_tokens", d_inf_defaults["max_new_tokens"])), # comp_left_max_tokens
@@ -1304,9 +1303,9 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(value=_ic("top_k", d_inf_defaults["top_k"])), # comp_right_top_k
                 gr.update(value=_ic("seed", d_inf_defaults["seed"])), # comp_right_seed
                 gr.update(value=_ic("prompt", d_inf_defaults["prompt"])), # comp_prompt
-                gr.update(), # comp_generate_btn (不更新)
-                gr.update(), # comp_left_output (不更新)
-                gr.update()  # comp_right_output (不更新)
+                gr.update(), # comp_generate_btn
+                gr.update(), # comp_left_output
+                gr.update()  # comp_right_output
             ]
             
             return base_updates + comparison_updates
@@ -1383,9 +1382,8 @@ def build_app_interface(selected_lang: str = "zh"):
             [model_dropdown, comp_left_model, comp_right_model]
         )
 
-        # ------------------------------------------------------------------ #
+        # ------------------------------------------------------------------
         # Call backs: language switch
-        # ------------------------------------------------------------------ #
         def switch_language(lang_code: str):
             Tn = LANG_JSON[lang_code]
             
@@ -1657,53 +1655,122 @@ def build_app_interface(selected_lang: str = "zh"):
                     yield left_output, right_output
                     return
                 
-                # Generate text for left model
-                try:
-                    left_gen = generate_text(
-                        data_dir=left_data_dir,
-                        out_dir=left_out_dir,
-                        prompt=prompt,
-                        num_samples=left_num_samples_int,
-                        max_new_tokens=left_max_tokens_int,
-                        temperature=left_temperature_float,
-                        top_k=left_top_k_int,
-                        seed=left_seed_int,
-                        device=DEFAULT_CONFIG["inference"]["device"],
-                        dtype=DEFAULT_CONFIG["inference"]["dtype"],
-                        compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
-                    )
-                    
-                    for piece in left_gen:
-                        left_output += piece
-                        yield left_output, right_output
-                except Exception as e:
-                    left_output = f"Left model generation error: {str(e)}"
-                    yield left_output, right_output
+                # Create queues for communication between threads
+                left_queue = queue.Queue()
+                right_queue = queue.Queue()
                 
-                # Generate text for right model
-                try:
-                    right_gen = generate_text(
-                        data_dir=right_data_dir,
-                        out_dir=right_out_dir,
-                        prompt=prompt,
-                        num_samples=right_num_samples_int,
-                        max_new_tokens=right_max_tokens_int,
-                        temperature=right_temperature_float,
-                        top_k=right_top_k_int,
-                        seed=right_seed_int,
-                        device=DEFAULT_CONFIG["inference"]["device"],
-                        dtype=DEFAULT_CONFIG["inference"]["dtype"],
-                        compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
-                    )
+                def run_left_inference():
+                    """Run left model inference in separate thread"""
+                    try:
+                        left_gen = generate_text(
+                            data_dir=left_data_dir,
+                            out_dir=left_out_dir,
+                            prompt=prompt,
+                            num_samples=left_num_samples_int,
+                            max_new_tokens=left_max_tokens_int,
+                            temperature=left_temperature_float,
+                            top_k=left_top_k_int,
+                            seed=left_seed_int,
+                            device=DEFAULT_CONFIG["inference"]["device"],
+                            dtype=DEFAULT_CONFIG["inference"]["dtype"],
+                            compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
+                        )
+                        
+                        for piece in left_gen:
+                            left_queue.put(('data', piece))
+                        left_queue.put(('done', None))
+                    except Exception as e:
+                        left_queue.put(('error', f"Left model generation error: {str(e)}"))
+                        left_queue.put(('done', None))
+                
+                def run_right_inference():
+                    """Run right model inference in separate thread"""
+                    try:
+                        right_gen = generate_text(
+                            data_dir=right_data_dir,
+                            out_dir=right_out_dir,
+                            prompt=prompt,
+                            num_samples=right_num_samples_int,
+                            max_new_tokens=right_max_tokens_int,
+                            temperature=right_temperature_float,
+                            top_k=right_top_k_int,
+                            seed=right_seed_int,
+                            device=DEFAULT_CONFIG["inference"]["device"],
+                            dtype=DEFAULT_CONFIG["inference"]["dtype"],
+                            compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
+                        )
+                        
+                        for piece in right_gen:
+                            right_queue.put(('data', piece))
+                        right_queue.put(('done', None))
+                    except Exception as e:
+                        right_queue.put(('error', f"Right model generation error: {str(e)}"))
+                        right_queue.put(('done', None))
+                
+                # Start both inference threads
+                left_thread = threading.Thread(target=run_left_inference)
+                right_thread = threading.Thread(target=run_right_inference)
+                
+                left_thread.start()
+                right_thread.start()
+                
+                # Track completion status
+                left_done = False
+                right_done = False
+                
+                # Process outputs from both models simultaneously
+                while not (left_done and right_done):
+                    # Check for updates from both queues
+                    updated = False
                     
-                    for piece in right_gen:
-                        right_output += piece
+                    # Process left model output
+                    if not left_done:
+                        try:
+                            msg_type, data = left_queue.get_nowait()
+                            if msg_type == 'data':
+                                left_output += data
+                                updated = True
+                            elif msg_type == 'error':
+                                left_output = data
+                                updated = True
+                            elif msg_type == 'done':
+                                left_done = True
+                        except queue.Empty:
+                            pass
+                    
+                    # Process right model output
+                    if not right_done:
+                        try:
+                            msg_type, data = right_queue.get_nowait()
+                            if msg_type == 'data':
+                                right_output += data
+                                updated = True
+                            elif msg_type == 'error':
+                                right_output = data
+                                updated = True
+                            elif msg_type == 'done':
+                                right_done = True
+                        except queue.Empty:
+                            pass
+                    
+                    # Yield updated outputs if there were changes
+                    if updated:
                         yield left_output, right_output
-                except Exception as e:
-                    right_output = f"Left model generation error: {str(e)}"
-                    yield left_output, right_output
+                    
+                    # Small delay to prevent busy waiting
+                    import time
+                    time.sleep(0.1)
+                
+                # Wait for threads to complete
+                left_thread.join(timeout=5)
+                right_thread.join(timeout=5)
+                
+                # Final yield with complete outputs
+                yield left_output, right_output
                 
             except Exception as e:
+                import traceback
+                print(f"Dual inference error: {traceback.format_exc()}")
                 yield f"Error: {str(e)}", f"Error: {str(e)}"
         
         # Connect the generate button to the dual inference callback
