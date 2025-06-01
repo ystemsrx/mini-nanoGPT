@@ -586,7 +586,8 @@ def build_app_interface(selected_lang: str = "zh"):
                     max_new_tokens_box = gr.Number(label=T["inf_max_new_tokens"],
                                                    value=DEFAULT_CONFIG["inference"]["max_new_tokens"])
                     temperature_box = gr.Number(label=T["inf_temperature"],
-                                                value=DEFAULT_CONFIG["inference"]["temperature"])
+                                                value=DEFAULT_CONFIG["inference"]["temperature"],
+                                                step=0.1)
                     top_k_box = gr.Number(label=T["inf_top_k"],
                                           value=DEFAULT_CONFIG["inference"]["top_k"])
                     seed_box_inf = gr.Number(label=T["inf_seed"],
@@ -628,19 +629,42 @@ def build_app_interface(selected_lang: str = "zh"):
                 # Inference playground
                 gr.Markdown(f"### {T['compare_inference_playground']}")
                 
-                # Shared inference parameters
+                # 为左右两个模型分别设置参数
                 with gr.Row():
-                    comp_num_samples = gr.Number(label=T["inf_num_samples"], 
-                                                value=DEFAULT_CONFIG["inference"]["num_samples"])
-                    comp_max_tokens = gr.Number(label=T["inf_max_new_tokens"], 
-                                               value=DEFAULT_CONFIG["inference"]["max_new_tokens"])
-                    comp_temperature = gr.Number(label=T["inf_temperature"], 
-                                                value=DEFAULT_CONFIG["inference"]["temperature"])
-                    comp_top_k = gr.Number(label=T["inf_top_k"], 
-                                          value=DEFAULT_CONFIG["inference"]["top_k"])
-                    comp_seed = gr.Number(label=T["inf_seed"], 
-                                         value=DEFAULT_CONFIG["inference"]["seed"])
+                    # 左侧模型参数
+                    with gr.Column():
+                        gr.Markdown(f"**⚙️ Model 1**")
+                        with gr.Row():
+                            comp_left_num_samples = gr.Number(label=T["inf_num_samples"], 
+                                                           value=DEFAULT_CONFIG["inference"]["num_samples"])
+                            comp_left_max_tokens = gr.Number(label=T["inf_max_new_tokens"], 
+                                                           value=DEFAULT_CONFIG["inference"]["max_new_tokens"])
+                        with gr.Row():
+                            comp_left_temperature = gr.Number(label=T["inf_temperature"], 
+                                                            value=DEFAULT_CONFIG["inference"]["temperature"],
+                                                            step=0.1)
+                            comp_left_top_k = gr.Number(label=T["inf_top_k"], 
+                                                      value=DEFAULT_CONFIG["inference"]["top_k"])
+                            comp_left_seed = gr.Number(label=T["inf_seed"], 
+                                                     value=DEFAULT_CONFIG["inference"]["seed"])
                 
+                    # 右侧模型参数
+                    with gr.Column():
+                        gr.Markdown(f"**⚙️ Model 2**")
+                        with gr.Row():
+                            comp_right_num_samples = gr.Number(label=T["inf_num_samples"], 
+                                                             value=DEFAULT_CONFIG["inference"]["num_samples"])
+                            comp_right_max_tokens = gr.Number(label=T["inf_max_new_tokens"], 
+                                                             value=DEFAULT_CONFIG["inference"]["max_new_tokens"])
+                        with gr.Row():
+                            comp_right_temperature = gr.Number(label=T["inf_temperature"], 
+                                                             value=DEFAULT_CONFIG["inference"]["temperature"],
+                                                             step=0.1)
+                            comp_right_top_k = gr.Number(label=T["inf_top_k"], 
+                                                       value=DEFAULT_CONFIG["inference"]["top_k"])
+                            comp_right_seed = gr.Number(label=T["inf_seed"], 
+                                                    value=DEFAULT_CONFIG["inference"]["seed"])
+
                 # Shared prompt
                 comp_prompt = gr.Textbox(label=T["compare_shared_prompt"], lines=5, 
                                          value=DEFAULT_CONFIG["inference"]["prompt"],
@@ -719,7 +743,7 @@ def build_app_interface(selected_lang: str = "zh"):
             defaults_train = DEFAULT_CONFIG["training"]
             
             # 初始化所有组件为非交互状态，视觉上显示为空白（但实际值保留为默认值）
-            # 注意：这里使用空字符串作为显示值，但实际值会保留在后端
+            # 注意：这里使用空字符串作为显示值，但实际值会保留在后端，懒得改接口了。
             warmup_update = gr.update(interactive=False, value="") 
             lr_decay_update = gr.update(interactive=False, value="")
             min_lr_update = gr.update(interactive=False, value="")
@@ -969,11 +993,18 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(value=generate_loss_chart_html([], [])), # comp_right_plot
                 gr.update(value=""), # comp_left_history
                 gr.update(value=""), # comp_right_history
-                _d(d_inf["num_samples"]), # comp_num_samples
-                _d(d_inf["max_new_tokens"]), # comp_max_tokens
-                _d(d_inf["temperature"]), # comp_temperature
-                _d(d_inf["top_k"]), # comp_top_k
-                _d(d_inf["seed"]), # comp_seed
+                # 左侧模型参数
+                _d(d_inf["num_samples"]), # comp_left_num_samples
+                _d(d_inf["max_new_tokens"]), # comp_left_max_tokens
+                _d(d_inf["temperature"]), # comp_left_temperature
+                _d(d_inf["top_k"]), # comp_left_top_k
+                _d(d_inf["seed"]), # comp_left_seed
+                # 右侧模型参数
+                _d(d_inf["num_samples"]), # comp_right_num_samples
+                _d(d_inf["max_new_tokens"]), # comp_right_max_tokens
+                _d(d_inf["temperature"]), # comp_right_temperature
+                _d(d_inf["top_k"]), # comp_right_top_k
+                _d(d_inf["seed"]), # comp_right_seed
                 _d(d_inf["prompt"]), # comp_prompt
                 gr.update(), # comp_generate_btn (不重置)
                 gr.update(value=""), # comp_left_output
@@ -1107,11 +1138,18 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(), # comp_right_plot (不更新)
                 gr.update(), # comp_left_history (不更新)
                 gr.update(), # comp_right_history (不更新)
-                gr.update(value=_ic("num_samples", d_inf_defaults["num_samples"])), # comp_num_samples
-                gr.update(value=_ic("max_new_tokens", d_inf_defaults["max_new_tokens"])), # comp_max_tokens
-                gr.update(value=_ic("temperature", d_inf_defaults["temperature"])), # comp_temperature
-                gr.update(value=_ic("top_k", d_inf_defaults["top_k"])), # comp_top_k
-                gr.update(value=_ic("seed", d_inf_defaults["seed"])), # comp_seed
+                # 左侧模型参数
+                gr.update(value=_ic("num_samples", d_inf_defaults["num_samples"])), # comp_left_num_samples
+                gr.update(value=_ic("max_new_tokens", d_inf_defaults["max_new_tokens"])), # comp_left_max_tokens
+                gr.update(value=_ic("temperature", d_inf_defaults["temperature"])), # comp_left_temperature
+                gr.update(value=_ic("top_k", d_inf_defaults["top_k"])), # comp_left_top_k
+                gr.update(value=_ic("seed", d_inf_defaults["seed"])), # comp_left_seed
+                # 右侧模型参数
+                gr.update(value=_ic("num_samples", d_inf_defaults["num_samples"])), # comp_right_num_samples
+                gr.update(value=_ic("max_new_tokens", d_inf_defaults["max_new_tokens"])), # comp_right_max_tokens
+                gr.update(value=_ic("temperature", d_inf_defaults["temperature"])), # comp_right_temperature
+                gr.update(value=_ic("top_k", d_inf_defaults["top_k"])), # comp_right_top_k
+                gr.update(value=_ic("seed", d_inf_defaults["seed"])), # comp_right_seed
                 gr.update(value=_ic("prompt", d_inf_defaults["prompt"])), # comp_prompt
                 gr.update(), # comp_generate_btn (不更新)
                 gr.update(), # comp_left_output (不更新)
@@ -1145,8 +1183,10 @@ def build_app_interface(selected_lang: str = "zh"):
             comp_left_params, comp_right_params,
             comp_left_plot, comp_right_plot,
             comp_left_history, comp_right_history,
-            comp_num_samples, comp_max_tokens,
-            comp_temperature, comp_top_k, comp_seed,
+            comp_left_num_samples, comp_left_max_tokens,
+            comp_left_temperature, comp_left_top_k, comp_left_seed,
+            comp_right_num_samples, comp_right_max_tokens,
+            comp_right_temperature, comp_right_top_k, comp_right_seed,
             comp_prompt, comp_generate_btn,
             comp_left_output, comp_right_output
         ]
@@ -1235,6 +1275,10 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(label=Tn["compare_model_params"]), gr.update(label=Tn["compare_model_params"]),
                 gr.update(label=Tn["compare_loss_curve"]), gr.update(label=Tn["compare_loss_curve"]),
                 gr.update(label=Tn["compare_inference_history"]), gr.update(label=Tn["compare_inference_history"]),
+                # 左侧模型参数
+                gr.update(label=Tn["inf_num_samples"]), gr.update(label=Tn["inf_max_new_tokens"]), 
+                gr.update(label=Tn["inf_temperature"]), gr.update(label=Tn["inf_top_k"]), gr.update(label=Tn["inf_seed"]),
+                # 右侧模型参数
                 gr.update(label=Tn["inf_num_samples"]), gr.update(label=Tn["inf_max_new_tokens"]), 
                 gr.update(label=Tn["inf_temperature"]), gr.update(label=Tn["inf_top_k"]), gr.update(label=Tn["inf_seed"]),
                 gr.update(label=Tn["compare_shared_prompt"]), gr.update(value=Tn["compare_generate_btn"]),
@@ -1268,8 +1312,10 @@ def build_app_interface(selected_lang: str = "zh"):
             comp_left_params, comp_right_params,
             comp_left_plot, comp_right_plot,
             comp_left_history, comp_right_history,
-            comp_num_samples, comp_max_tokens, 
-            comp_temperature, comp_top_k, comp_seed,
+            comp_left_num_samples, comp_left_max_tokens, 
+            comp_left_temperature, comp_left_top_k, comp_left_seed,
+            comp_right_num_samples, comp_right_max_tokens, 
+            comp_right_temperature, comp_right_top_k, comp_right_seed,
             comp_prompt, comp_generate_btn,
             comp_left_output, comp_right_output
         ]
@@ -1382,28 +1428,46 @@ def build_app_interface(selected_lang: str = "zh"):
             left_data_dir, left_out_dir,
             right_data_dir, right_out_dir,
             prompt,
-            num_samples, max_tokens, temperature, top_k, seed
+            left_num_samples, left_max_tokens, left_temperature, left_top_k, left_seed,
+            right_num_samples, right_max_tokens, right_temperature, right_top_k, right_seed
         ):
             """
-            Run inference on both models simultaneously
+            Run inference on both models simultaneously with different parameters
             """
             if not left_out_dir or not right_out_dir:
-                return "Please select both models first.", "Please select both models first."
+                return "请先选择两个模型。", "请先选择两个模型。"
             
             if not prompt.strip():
-                return "Prompt is empty, please provide a starting text.", "Prompt is empty, please provide a starting text."
+                return "提示词为空，请输入起始文本。", "提示词为空，请输入起始文本。"
             
             # Start with empty outputs
             left_output = ""
             right_output = ""
             
-            # Common parameters for both models
             try:
-                num_samples_int = int(float(num_samples))
-                max_tokens_int = int(float(max_tokens))
-                temperature_float = float(temperature)
-                top_k_int = int(float(top_k)) if top_k is not None and str(top_k).strip() != "" else None
-                seed_int = int(float(seed))
+                # 转换左侧模型参数
+                try:
+                    left_num_samples_int = int(float(left_num_samples))
+                    left_max_tokens_int = int(float(left_max_tokens))
+                    left_temperature_float = float(left_temperature)
+                    left_top_k_int = int(float(left_top_k)) if left_top_k is not None and str(left_top_k).strip() != "" else None
+                    left_seed_int = int(float(left_seed))
+                except ValueError as e:
+                    left_output = f"左侧模型参数错误: {str(e)}"
+                    yield left_output, right_output
+                    return
+                    
+                # 转换右侧模型参数
+                try:
+                    right_num_samples_int = int(float(right_num_samples))
+                    right_max_tokens_int = int(float(right_max_tokens))
+                    right_temperature_float = float(right_temperature)
+                    right_top_k_int = int(float(right_top_k)) if right_top_k is not None and str(right_top_k).strip() != "" else None
+                    right_seed_int = int(float(right_seed))
+                except ValueError as e:
+                    right_output = f"右侧模型参数错误: {str(e)}"
+                    yield left_output, right_output
+                    return
                 
                 # Generate text for left model
                 try:
@@ -1411,11 +1475,11 @@ def build_app_interface(selected_lang: str = "zh"):
                         data_dir=left_data_dir,
                         out_dir=left_out_dir,
                         prompt=prompt,
-                        num_samples=num_samples_int,
-                        max_new_tokens=max_tokens_int,
-                        temperature=temperature_float,
-                        top_k=top_k_int,
-                        seed=seed_int,
+                        num_samples=left_num_samples_int,
+                        max_new_tokens=left_max_tokens_int,
+                        temperature=left_temperature_float,
+                        top_k=left_top_k_int,
+                        seed=left_seed_int,
                         device=DEFAULT_CONFIG["inference"]["device"],
                         dtype=DEFAULT_CONFIG["inference"]["dtype"],
                         compile_model=False  # 禁用编译以避免Triton错误
@@ -1425,7 +1489,7 @@ def build_app_interface(selected_lang: str = "zh"):
                         left_output += piece
                         yield left_output, right_output
                 except Exception as e:
-                    left_output = f"Error with left model: {str(e)}"
+                    left_output = f"左侧模型生成错误: {str(e)}"
                     yield left_output, right_output
                 
                 # Generate text for right model
@@ -1434,11 +1498,11 @@ def build_app_interface(selected_lang: str = "zh"):
                         data_dir=right_data_dir,
                         out_dir=right_out_dir,
                         prompt=prompt,
-                        num_samples=num_samples_int,
-                        max_new_tokens=max_tokens_int,
-                        temperature=temperature_float,
-                        top_k=top_k_int,
-                        seed=seed_int,
+                        num_samples=right_num_samples_int,
+                        max_new_tokens=right_max_tokens_int,
+                        temperature=right_temperature_float,
+                        top_k=right_top_k_int,
+                        seed=right_seed_int,
                         device=DEFAULT_CONFIG["inference"]["device"],
                         dtype=DEFAULT_CONFIG["inference"]["dtype"],
                         compile_model=False  # 禁用编译以避免Triton错误
@@ -1448,11 +1512,11 @@ def build_app_interface(selected_lang: str = "zh"):
                         right_output += piece
                         yield left_output, right_output
                 except Exception as e:
-                    right_output = f"Error with right model: {str(e)}"
+                    right_output = f"右侧模型生成错误: {str(e)}"
                     yield left_output, right_output
                 
             except Exception as e:
-                yield f"Parameter error: {str(e)}", f"Parameter error: {str(e)}"
+                yield f"参数错误: {str(e)}", f"参数错误: {str(e)}"
         
         # Connect the generate button to the dual inference callback
         comp_generate_btn.click(
@@ -1461,7 +1525,8 @@ def build_app_interface(selected_lang: str = "zh"):
                 comp_left_data_dir, comp_left_out_dir,
                 comp_right_data_dir, comp_right_out_dir,
                 comp_prompt,
-                comp_num_samples, comp_max_tokens, comp_temperature, comp_top_k, comp_seed
+                comp_left_num_samples, comp_left_max_tokens, comp_left_temperature, comp_left_top_k, comp_left_seed,
+                comp_right_num_samples, comp_right_max_tokens, comp_right_temperature, comp_right_top_k, comp_right_seed
             ],
             outputs=[comp_left_output, comp_right_output]
         )
