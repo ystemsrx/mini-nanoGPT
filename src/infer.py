@@ -12,6 +12,7 @@ from PIL import Image
 from src.config import DEFAULT_CONFIG
 from src.db_manager import DBManager
 from src.gpt_model import GPTConfig, GPT
+from src.gpt_self_attn import GPTSelfAttnConfig, GPTSelfAttn
 
 dbm = DBManager()
 
@@ -89,8 +90,18 @@ def generate_text(
             return
 
         checkpoint = torch.load(ckpt_path, map_location=device)
-        gptconf = GPTConfig(**checkpoint['model_args'])
-        model = GPT(gptconf)
+        model_args = checkpoint['model_args']
+        
+        # Determine if this is a self-attention model based on model_args
+        is_self_attention_model = 'ffn_hidden_mult' in model_args or 'qkv_bias' in model_args
+        
+        if is_self_attention_model:
+            gptconf = GPTSelfAttnConfig(**model_args)
+            model = GPTSelfAttn(gptconf)
+        else:
+            gptconf = GPTConfig(**model_args)
+            model = GPT(gptconf)
+            
         state_dict = checkpoint['model']
         unwanted_prefix = '_orig_mod.'
         for k, v in list(state_dict.items()):

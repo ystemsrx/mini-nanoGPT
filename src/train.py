@@ -15,6 +15,7 @@ from torch.distributed import init_process_group, destroy_process_group
 from src.config import DEFAULT_CONFIG, IntegerTypes
 from src.db_manager import DBManager
 from src.gpt_model import GPTConfig, GPT, configure_optimizers
+from src.gpt_self_attn import GPTSelfAttnConfig, GPTSelfAttn, configure_optimizers_self_attn
 
 dbm = DBManager()
 
@@ -61,7 +62,18 @@ def train_model_generator(
     dtype=DEFAULT_CONFIG["training"]["dtype"],
     compile_model=DEFAULT_CONFIG["training"]["compile_model"],
     seed=DEFAULT_CONFIG["training"]["seed"],
-    save_interval=DEFAULT_CONFIG["training"]["save_interval"]
+    save_interval=DEFAULT_CONFIG["training"]["save_interval"],
+    # Self-attention parameters
+    use_self_attention=DEFAULT_CONFIG["training"]["use_self_attention"],
+    ffn_hidden_mult=DEFAULT_CONFIG["training"]["ffn_hidden_mult"],
+    qkv_bias=DEFAULT_CONFIG["training"]["qkv_bias"],
+    attn_dropout=DEFAULT_CONFIG["training"]["attn_dropout"],
+    resid_dropout=DEFAULT_CONFIG["training"]["resid_dropout"],
+    ln_eps=DEFAULT_CONFIG["training"]["ln_eps"],
+    init_std=DEFAULT_CONFIG["training"]["init_std"],
+    use_flash_attn=DEFAULT_CONFIG["training"]["use_flash_attn"],
+    pos_encoding_type=DEFAULT_CONFIG["training"]["pos_encoding_type"],
+    rope_base=DEFAULT_CONFIG["training"]["rope_base"]
 ):
     model_name = os.path.basename(os.path.abspath(out_dir)) or "new_model" # Ensure out_dir is absolute first
 
@@ -83,7 +95,13 @@ def train_model_generator(
         warmup_iters=warmup_iters, lr_decay_iters=lr_decay_iters, min_lr=min_lr,
         step_size=step_size, step_gamma=step_gamma, polynomial_power=polynomial_power,
         backend=backend, device=device, dtype=dtype, compile_model=compile_model,
-        seed=seed, save_interval=save_interval
+        seed=seed, save_interval=save_interval,
+        # Self-attention parameters
+        use_self_attention=use_self_attention, ffn_hidden_mult=ffn_hidden_mult,
+        qkv_bias=qkv_bias, attn_dropout=attn_dropout, resid_dropout=resid_dropout,
+        ln_eps=ln_eps, init_std=init_std, use_flash_attn=use_flash_attn,
+        pos_encoding_type=pos_encoding_type,
+        rope_base=rope_base
     )
     dbm.save_training_config(model_id, _training_cfg_local_vars)
 
@@ -230,14 +248,31 @@ def train_model_generator(
         meta = pickle.load(f)
     vocab_size = meta['vocab_size']
 
+    # Choose model based on use_self_attention flag
+    if use_self_attention:
+        model_args = dict(
+            n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size, 
+            bias=bias, vocab_size=vocab_size, dropout=dropout,
+            # Self-attention specific parameters
+            ffn_hidden_mult=ffn_hidden_mult, qkv_bias=qkv_bias,
+            attn_dropout=attn_dropout, resid_dropout=resid_dropout,
+            ln_eps=ln_eps, init_std=init_std, use_flash_attn=use_flash_attn,
+            pos_encoding_type=pos_encoding_type,
+            rope_base=rope_base
+        )
+    else:
+        model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size, bias=bias, vocab_size=vocab_size, dropout=dropout)
 
-    model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size, bias=bias, vocab_size=vocab_size, dropout=dropout)
     iter_num = 0
     best_val_loss = 1e9 # Initialize with a large value
 
     if num_eval_seeds > 0: # Evaluation mode
-        gptconf = GPTConfig(**model_args)
-        model = GPT(gptconf)
+        if use_self_attention:
+            gptconf = GPTSelfAttnConfig(**model_args)
+            model = GPTSelfAttn(gptconf)
+        else:
+            gptconf = GPTConfig(**model_args)
+            model = GPT(gptconf)
         ckpt_path_eval = os.path.join(out_dir, 'ckpt.pt')
         if not os.path.exists(ckpt_path_eval):
             msg = f"Error: Checkpoint {ckpt_path_eval} not found for evaluation mode."
@@ -257,8 +292,12 @@ def train_model_generator(
 
 
     elif init_from == 'scratch': # Training mode from scratch
-        gptconf = GPTConfig(**model_args)
-        model = GPT(gptconf)
+        if use_self_attention:
+            gptconf = GPTSelfAttnConfig(**model_args)
+            model = GPTSelfAttn(gptconf)
+        else:
+            gptconf = GPTConfig(**model_args)
+            model = GPT(gptconf)
     elif init_from == 'resume': # Training mode, resume
         ckpt_path = os.path.join(out_dir, 'ckpt.pt')
         if not os.path.exists(ckpt_path):
@@ -274,8 +313,12 @@ def train_model_generator(
                 model_args[k_check] = v_check
             else: print(f"Warning: Checkpoint arg '{k_check}' not in current model_args.") # Optional warning
 
-        gptconf = GPTConfig(**model_args)
-        model = GPT(gptconf)
+        if use_self_attention:
+            gptconf = GPTSelfAttnConfig(**model_args)
+            model = GPTSelfAttn(gptconf)
+        else:
+            gptconf = GPTConfig(**model_args)
+            model = GPT(gptconf)
         state_dict = checkpoint['model']
         unwanted_prefix = '_orig_mod.'
         for k_sd, v_sd in list(state_dict.items()):
@@ -306,7 +349,6 @@ def train_model_generator(
         pass
 
     model.to(device)
-
 
     # ------------------------------------------------------------------------
     # EVALUATION-ONLY MODE
@@ -385,7 +427,12 @@ def train_model_generator(
     # ------------------------------------------------------------------------
     # TRAINING MODE (num_eval_seeds == 0)
     # ------------------------------------------------------------------------
-    optimizer = configure_optimizers(model, weight_decay, learning_rate, (beta1, beta2), device_type)
+    # Choose optimizer based on model type
+    if use_self_attention:
+        optimizer = configure_optimizers_self_attn(model, weight_decay, learning_rate, (beta1, beta2), device_type)
+    else:
+        optimizer = configure_optimizers(model, weight_decay, learning_rate, (beta1, beta2), device_type)
+    
     if init_from == 'resume' and 'optimizer' in checkpoint: # Check if optimizer state exists
         try:
             optimizer.load_state_dict(checkpoint['optimizer'])

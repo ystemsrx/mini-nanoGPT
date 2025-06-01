@@ -54,7 +54,18 @@ DEFAULT_CONFIG = {
         "dtype": "float16",
         "compile_model": False,
         "seed": 1024,
-        "save_interval": 50
+        "save_interval": 50,
+        # Self-attention specific parameters
+        "use_self_attention": False,
+        "ffn_hidden_mult": 4,
+        "qkv_bias": True,
+        "attn_dropout": 0.1,
+        "resid_dropout": 0.1,
+        "ln_eps": 1e-5,
+        "init_std": 0.02,
+        "use_flash_attn": False,
+        "pos_encoding_type": "rope",
+        "rope_base": 10000
     },
     "inference": {
         "out_dir": "out",
@@ -136,6 +147,19 @@ LANG_JSON = {
         "train_plot": "Loss Curve",
         "train_seed": "Seed",
         "train_save_interval": "Save Interval (Steps)",
+
+        # Self-attention parameters
+        "train_self_attn_title": "Self-Attention Parameters",
+        "train_use_self_attention": "Enable Self-Attention",
+        "train_ffn_hidden_mult": "FFN Hidden Multiplier",
+        "train_qkv_bias": "QKV Bias",
+        "train_attn_dropout": "Attention Dropout",
+        "train_resid_dropout": "Residual Dropout",
+        "train_ln_eps": "Layer Norm Epsilon",
+        "train_init_std": "Weight Init Std",
+        "train_use_flash_attn": "Use Flash Attention",
+        "train_pos_encoding_type": "Position Encoding",
+        "train_rope_base": "RoPE Base",
 
         "inf_out_dir": "Model Directory (ckpt.pt)",
         "inf_prompt": "Prompt",
@@ -238,6 +262,19 @@ LANG_JSON = {
         "train_plot": "损失曲线 (Loss Curve)",
         "train_seed": "种子 (Seed)",
         "train_save_interval": "保存间隔 (Save Interval)",
+
+        # Self-attention parameters
+        "train_self_attn_title": "自注意力参数 (Self-Attention Parameters)",
+        "train_use_self_attention": "启用自注意力 (Enable Self-Attention)",
+        "train_ffn_hidden_mult": "FFN隐藏层倍数 (FFN Hidden Multiplier)",
+        "train_qkv_bias": "QKV偏置 (QKV Bias)",
+        "train_attn_dropout": "注意力丢弃率 (Attention Dropout)",
+        "train_resid_dropout": "残差丢弃率 (Residual Dropout)",
+        "train_ln_eps": "层归一化精度 (Layer Norm Epsilon)",
+        "train_init_std": "权重初始化标准差 (Weight Init Std)",
+        "train_use_flash_attn": "使用 Flash Attention (Use Flash Attention)",
+        "train_pos_encoding_type": "位置编码类型 (Position Encoding)",
+        "train_rope_base": "RoPE基数 (RoPE Base)",
 
         "inf_out_dir": "模型目录（ckpt.pt）",
         "inf_prompt": "提示词 (Prompt)",

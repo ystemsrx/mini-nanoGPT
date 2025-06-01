@@ -559,6 +559,66 @@ def build_app_interface(selected_lang: str = "zh"):
                     save_interval_box = gr.Number(label=T["train_save_interval"],
                                                    value=DEFAULT_CONFIG["training"]["save_interval"])
 
+                # Self-attention parameters in collapsible accordion
+                with gr.Accordion(label=T["train_self_attn_title"], open=False) as self_attn_accordion:
+                    use_self_attention_box = gr.Checkbox(
+                        label=T["train_use_self_attention"],
+                        value=DEFAULT_CONFIG["training"]["use_self_attention"]
+                    )
+                    
+                    with gr.Row():
+                        ffn_hidden_mult_box = gr.Number(
+                            label=T["train_ffn_hidden_mult"],
+                            value=DEFAULT_CONFIG["training"]["ffn_hidden_mult"],
+                            visible=False
+                        )
+                        qkv_bias_box = gr.Checkbox(
+                            label=T["train_qkv_bias"],
+                            value=DEFAULT_CONFIG["training"]["qkv_bias"],
+                            visible=False
+                        )
+                        attn_dropout_box = gr.Number(
+                            label=T["train_attn_dropout"],
+                            value=DEFAULT_CONFIG["training"]["attn_dropout"],
+                            step=0.01,
+                            visible=False
+                        )
+                        resid_dropout_box = gr.Number(
+                            label=T["train_resid_dropout"],
+                            value=DEFAULT_CONFIG["training"]["resid_dropout"],
+                            step=0.01,
+                            visible=False
+                        )
+                    
+                    with gr.Row():
+                        ln_eps_box = gr.Number(
+                            label=T["train_ln_eps"],
+                            value=DEFAULT_CONFIG["training"]["ln_eps"],
+                            step=1e-6,
+                            visible=False
+                        )
+                        init_std_box = gr.Number(
+                            label=T["train_init_std"],
+                            value=DEFAULT_CONFIG["training"]["init_std"],
+                            step=0.001,
+                            visible=False
+                        )
+                        use_flash_attn_box = gr.Checkbox(
+                            label=T["train_use_flash_attn"],
+                            value=DEFAULT_CONFIG["training"]["use_flash_attn"],
+                            visible=False
+                        )
+                        pos_encoding_type_box = gr.Dropdown(
+                            label=T["train_pos_encoding_type"],
+                            choices=["rope", "alibi"],
+                            value=DEFAULT_CONFIG["training"]["pos_encoding_type"],
+                            visible=False
+                        )
+                        rope_base_box = gr.Number(
+                            label=T["train_rope_base"],
+                            value=DEFAULT_CONFIG["training"]["rope_base"],
+                            visible=False
+                        )
 
                 train_btn = gr.Button(T["train_start_btn"])
                 stop_btn = gr.Button(T["stop_btn"])
@@ -787,6 +847,48 @@ def build_app_interface(selected_lang: str = "zh"):
             ]
         )
         
+        # -----------------------------
+        # Self-Attention Parameters Callback
+        # -----------------------------
+        def update_self_attention_params(use_self_attention):
+            """Update visibility of self-attention parameters based on checkbox"""
+            defaults_train = DEFAULT_CONFIG["training"]
+            
+            if use_self_attention:
+                return [
+                    gr.update(visible=True, value=defaults_train["ffn_hidden_mult"]),  # ffn_hidden_mult_box
+                    gr.update(visible=True, value=defaults_train["qkv_bias"]),         # qkv_bias_box
+                    gr.update(visible=True, value=defaults_train["attn_dropout"]),     # attn_dropout_box
+                    gr.update(visible=True, value=defaults_train["resid_dropout"]),    # resid_dropout_box
+                    gr.update(visible=True, value=defaults_train["ln_eps"]),           # ln_eps_box
+                    gr.update(visible=True, value=defaults_train["init_std"]),         # init_std_box
+                    gr.update(visible=True, value=defaults_train["use_flash_attn"]),   # use_flash_attn_box
+                    gr.update(visible=True, value=defaults_train["pos_encoding_type"]), # pos_encoding_type_box
+                    gr.update(visible=True, value=defaults_train["rope_base"])         # rope_base_box
+                ]
+            else:
+                return [
+                    gr.update(visible=False),  # ffn_hidden_mult_box
+                    gr.update(visible=False),  # qkv_bias_box
+                    gr.update(visible=False),  # attn_dropout_box
+                    gr.update(visible=False),  # resid_dropout_box
+                    gr.update(visible=False),  # ln_eps_box
+                    gr.update(visible=False),  # init_std_box
+                    gr.update(visible=False),  # use_flash_attn_box
+                    gr.update(visible=False),  # pos_encoding_type_box
+                    gr.update(visible=False)   # rope_base_box
+                ]
+
+        use_self_attention_box.change(
+            fn=update_self_attention_params,
+            inputs=[use_self_attention_box],
+            outputs=[
+                ffn_hidden_mult_box, qkv_bias_box, attn_dropout_box, resid_dropout_box,
+                ln_eps_box, init_std_box, use_flash_attn_box, pos_encoding_type_box,
+                rope_base_box
+            ]
+        )
+        
         # ------------------------------------------------------------------ #
         # Call backs: start training
         # ------------------------------------------------------------------ #
@@ -802,7 +904,10 @@ def build_app_interface(selected_lang: str = "zh"):
             lr_decay_, min_lr_,
             step_size_, step_gamma_, polynomial_power_,
             backend_, device_, dtype_, compile_,
-            seed_, save_interval_
+            seed_, save_interval_,
+            # Self-attention parameters
+            use_self_attention_, ffn_hidden_mult_, qkv_bias_, attn_dropout_, 
+            resid_dropout_, ln_eps_, init_std_, use_flash_attn_, pos_encoding_type_, rope_base_
         ):
             empty_plot_html = generate_loss_chart_html([], [])
             try:
@@ -818,6 +923,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 defaults_train = DEFAULT_CONFIG["training"]
                 def safe_int(v, default_val): return default_val if v == "" or v is None else int(float(v))
                 def safe_float(v, default_val): return default_val if v == "" or v is None else float(v)
+                def safe_bool(v, default_val): return default_val if v is None else bool(v)
 
                 gen = train_model_generator(
                     data_dir=data_dir_,
@@ -846,11 +952,22 @@ def build_app_interface(selected_lang: str = "zh"):
                     min_lr=safe_float(min_lr_, defaults_train["min_lr"]),
                     step_size=safe_int(step_size_, defaults_train["step_size"]),
                     step_gamma=safe_float(step_gamma_, defaults_train["step_gamma"]),
-                    polynomial_power=safe_float(polynomial_power_, defaults_train["polynomial_power"]), # Original was float, ensure consistency
+                    polynomial_power=safe_float(polynomial_power_, defaults_train["polynomial_power"]),
                     backend=backend_, device=device_, dtype=dtype_,
                     compile_model=bool(compile_),
                     seed=safe_int(seed_, defaults_train["seed"]),
-                    save_interval=safe_int(save_interval_, defaults_train["save_interval"])
+                    save_interval=safe_int(save_interval_, defaults_train["save_interval"]),
+                    # Self-attention parameters
+                    use_self_attention=safe_bool(use_self_attention_, defaults_train["use_self_attention"]),
+                    ffn_hidden_mult=safe_int(ffn_hidden_mult_, defaults_train["ffn_hidden_mult"]),
+                    qkv_bias=safe_bool(qkv_bias_, defaults_train["qkv_bias"]),
+                    attn_dropout=safe_float(attn_dropout_, defaults_train["attn_dropout"]),
+                    resid_dropout=safe_float(resid_dropout_, defaults_train["resid_dropout"]),
+                    ln_eps=safe_float(ln_eps_, defaults_train["ln_eps"]),
+                    init_std=safe_float(init_std_, defaults_train["init_std"]),
+                    use_flash_attn=safe_bool(use_flash_attn_, defaults_train["use_flash_attn"]),
+                    pos_encoding_type=pos_encoding_type_ if pos_encoding_type_ else defaults_train["pos_encoding_type"],
+                    rope_base=safe_int(rope_base_, defaults_train["rope_base"])
                 )
                 
                 for p_html_progress, log_line_html, plot_data_tuple in gen:
@@ -884,7 +1001,11 @@ def build_app_interface(selected_lang: str = "zh"):
                 lr_decay_box, min_lr_box,
                 step_size_box, step_gamma_box, polynomial_power_box,
                 backend_box, device_box, dtype_box, compile_box,
-                seed_box, save_interval_box
+                seed_box, save_interval_box,
+                # Self-attention parameters
+                use_self_attention_box, ffn_hidden_mult_box, qkv_bias_box, attn_dropout_box,
+                resid_dropout_box, ln_eps_box, init_std_box, use_flash_attn_box, pos_encoding_type_box,
+                rope_base_box
             ],
             outputs=[train_progress, train_log, train_plot]
         )
@@ -948,6 +1069,10 @@ def build_app_interface(selected_lang: str = "zh"):
             default_scheduler = d_train["lr_scheduler_type"]
             warmup_update, lr_decay_update, min_lr_update, step_size_update, step_gamma_update, polynomial_power_update = update_lr_scheduler_params(default_scheduler)
             
+            # 获取默认自注意力参数状态
+            default_use_self_attention = d_train["use_self_attention"]
+            self_attn_updates = update_self_attention_params(default_use_self_attention)
+            
             # 原始的返回值
             base_updates = [
                 _b(True), _d("new_model"),      # new_model_chk, model_name_box
@@ -973,6 +1098,17 @@ def build_app_interface(selected_lang: str = "zh"):
                 _d(d_train["backend"]), _d(d_train["device"]), _d(d_train["dtype"]),
                 _b(d_train["compile_model"]),
                 _d(d_train["seed"]), _d(d_train["save_interval"]),
+                # Self-attention parameters
+                _b(d_train["use_self_attention"]),  # use_self_attention_box
+                self_attn_updates[0],  # ffn_hidden_mult_box
+                self_attn_updates[1],  # qkv_bias_box
+                self_attn_updates[2],  # attn_dropout_box
+                self_attn_updates[3],  # resid_dropout_box
+                self_attn_updates[4],  # ln_eps_box
+                self_attn_updates[5],  # init_std_box
+                self_attn_updates[6],  # use_flash_attn_box
+                self_attn_updates[7],  # pos_encoding_type_box
+                self_attn_updates[8],  # rope_base_box
                 generate_loss_chart_html([], []), # train_plot (HTML)
                 "",                               # train_log (empty string for HTML box)
                 _d(), _d(),                       # data_dir_inf, out_dir_inf
@@ -980,6 +1116,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 _d(d_inf["num_samples"]), _d(d_inf["max_new_tokens"]),
                 _d(d_inf["temperature"]), _d(d_inf["top_k"]), 
                 _d(d_inf["seed"]), # seed_box_inf
+                gr.update(), # inf_btn (添加缺失的组件)
                 ""                 # inf_output
             ]
             
@@ -1076,6 +1213,10 @@ def build_app_interface(selected_lang: str = "zh"):
             # 根据学习率调度器类型更新相关组件状态
             warmup_update, lr_decay_update, min_lr_update, step_size_update, step_gamma_update, polynomial_power_update = update_lr_scheduler_params(scheduler_type)
             
+            # 获取模型的自注意力使用状态并更新相关组件
+            use_self_attention = _cfg("use_self_attention", d_train_defaults["use_self_attention"])
+            self_attn_updates = update_self_attention_params(use_self_attention)
+            
             # 基本组件更新列表
             base_updates = [
                 gr.update(value=False),  # new_model_chk
@@ -1114,6 +1255,17 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(value=bool(_cfg("compile_model", d_train_defaults["compile_model"]))),
                 gr.update(value=_cfg("seed", d_train_defaults["seed"])),
                 gr.update(value=_cfg("save_interval", d_train_defaults["save_interval"])),
+                # Self-attention parameters
+                gr.update(value=use_self_attention),  # use_self_attention_box
+                self_attn_updates[0] if use_self_attention else gr.update(visible=False, value=_cfg("ffn_hidden_mult", d_train_defaults["ffn_hidden_mult"])),
+                self_attn_updates[1] if use_self_attention else gr.update(visible=False, value=_cfg("qkv_bias", d_train_defaults["qkv_bias"])),
+                self_attn_updates[2] if use_self_attention else gr.update(visible=False, value=_cfg("attn_dropout", d_train_defaults["attn_dropout"])),
+                self_attn_updates[3] if use_self_attention else gr.update(visible=False, value=_cfg("resid_dropout", d_train_defaults["resid_dropout"])),
+                self_attn_updates[4] if use_self_attention else gr.update(visible=False, value=_cfg("ln_eps", d_train_defaults["ln_eps"])),
+                self_attn_updates[5] if use_self_attention else gr.update(visible=False, value=_cfg("init_std", d_train_defaults["init_std"])),
+                self_attn_updates[6] if use_self_attention else gr.update(visible=False, value=_cfg("use_flash_attn", d_train_defaults["use_flash_attn"])),
+                self_attn_updates[7] if use_self_attention else gr.update(visible=False, value=_cfg("pos_encoding_type", d_train_defaults["pos_encoding_type"])),
+                self_attn_updates[8] if use_self_attention else gr.update(visible=False, value=_cfg("rope_base", d_train_defaults["rope_base"])),
                 loss_plot_html_content,        # train_plot (HTML)
                 train_log_s,                   # train_log (string for HTML box)
                 gr.update(value=data_processed_dir), # data_dir_inf (infer tab)
@@ -1124,6 +1276,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(value=_ic("temperature", d_inf_defaults["temperature"])),
                 gr.update(value=_ic("top_k", d_inf_defaults["top_k"])),
                 gr.update(value=_ic("seed", d_inf_defaults["seed"])), # seed_box_inf
+                gr.update(), # inf_btn (添加缺失的组件)
                 inference_history # inf_output
             ]
             
@@ -1173,11 +1326,15 @@ def build_app_interface(selected_lang: str = "zh"):
             step_size_box, step_gamma_box, polynomial_power_box,
             backend_box, device_box, dtype_box, compile_box,
             seed_box, save_interval_box,
+            # Self-attention parameters
+            use_self_attention_box, ffn_hidden_mult_box, qkv_bias_box, attn_dropout_box,
+            resid_dropout_box, ln_eps_box, init_std_box, use_flash_attn_box, pos_encoding_type_box,
+            rope_base_box,
             train_plot, train_log,
             data_dir_inf, out_dir_inf,
             prompt_box, num_samples_box, max_new_tokens_box,
             temperature_box, top_k_box, seed_box_inf,
-            inf_output,
+            inf_btn, inf_output,
             # 添加对比页面组件
             comp_left_model, comp_right_model,
             comp_left_params, comp_right_params,
@@ -1185,10 +1342,11 @@ def build_app_interface(selected_lang: str = "zh"):
             comp_left_history, comp_right_history,
             comp_left_num_samples, comp_left_max_tokens,
             comp_left_temperature, comp_left_top_k, comp_left_seed,
-            comp_right_num_samples, comp_right_max_tokens,
+            comp_right_num_samples, comp_right_max_tokens, 
             comp_right_temperature, comp_right_top_k, comp_right_seed,
             comp_prompt, comp_generate_btn,
             comp_left_output, comp_right_output
+            # 删除重复的自注意力参数部分
         ]
         model_dropdown.change(
             fn=select_model_cb,
@@ -1282,7 +1440,19 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(label=Tn["inf_num_samples"]), gr.update(label=Tn["inf_max_new_tokens"]), 
                 gr.update(label=Tn["inf_temperature"]), gr.update(label=Tn["inf_top_k"]), gr.update(label=Tn["inf_seed"]),
                 gr.update(label=Tn["compare_shared_prompt"]), gr.update(value=Tn["compare_generate_btn"]),
-                gr.update(label=Tn["compare_left_output"]), gr.update(label=Tn["compare_right_output"])
+                gr.update(label=Tn["compare_left_output"]), gr.update(label=Tn["compare_right_output"]),
+                # Self-attention parameters
+                gr.update(label=Tn["train_self_attn_title"]),
+                gr.update(label=Tn["train_use_self_attention"]),  # use_self_attention_box
+                gr.update(label=Tn["train_ffn_hidden_mult"]),    # ffn_hidden_mult_box
+                gr.update(label=Tn["train_qkv_bias"]),           # qkv_bias_box
+                gr.update(label=Tn["train_attn_dropout"]),       # attn_dropout_box
+                gr.update(label=Tn["train_resid_dropout"]),      # resid_dropout_box
+                gr.update(label=Tn["train_ln_eps"]),             # ln_eps_box
+                gr.update(label=Tn["train_init_std"]),           # init_std_box
+                gr.update(label=Tn["train_use_flash_attn"]),     # use_flash_attn_box
+                gr.update(label=Tn["train_pos_encoding_type"]),  # pos_encoding_type_box
+                gr.update(label=Tn["train_rope_base"]),          # rope_base_box
             ]
 
         lang_select_outputs = [
@@ -1317,7 +1487,11 @@ def build_app_interface(selected_lang: str = "zh"):
             comp_right_num_samples, comp_right_max_tokens, 
             comp_right_temperature, comp_right_top_k, comp_right_seed,
             comp_prompt, comp_generate_btn,
-            comp_left_output, comp_right_output
+            comp_left_output, comp_right_output,
+            # Self-attention parameters  
+            self_attn_accordion, use_self_attention_box, ffn_hidden_mult_box, qkv_bias_box, attn_dropout_box,
+            resid_dropout_box, ln_eps_box, init_std_box, use_flash_attn_box, 
+            pos_encoding_type_box, rope_base_box
         ]
 
         lang_select.change(
