@@ -1576,6 +1576,20 @@ def build_app_interface(selected_lang: str = "zh"):
                             "scheduler": cfg.get("lr_scheduler_type")
                         }
                     }
+                    
+                    # Add self-attention parameters if enabled
+                    if cfg.get("use_self_attention", False):
+                        display_params["Self-Attention"] = {
+                            "ffn_hidden_mult": cfg.get("ffn_hidden_mult"),
+                            "qkv_bias": cfg.get("qkv_bias"),
+                            "attn_dropout": cfg.get("attn_dropout"),
+                            "resid_dropout": cfg.get("resid_dropout"),
+                            "ln_eps": cfg.get("ln_eps"),
+                            "init_std": cfg.get("init_std"),
+                            "use_flash_attn": cfg.get("use_flash_attn"),
+                            "pos_encoding_type": cfg.get("pos_encoding_type"),
+                            "rope_base": cfg.get("rope_base")
+                        }
                 except Exception as e:
                     print(f"Error formatting parameters: {e}")
             
