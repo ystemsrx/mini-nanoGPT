@@ -135,12 +135,12 @@ def generate_text(
                         def encode(s):
                             # 确保正确分词完整提示词
                             ids = tokenizer.encode(s).ids
-                            # 过滤并映射ID
-                            return [old2new.get(id, 0) for id in ids if id in old2new]
+                            # 使用默认值策略保留所有token
+                            return [old2new.get(id, old2new.get(0, 0)) for id in ids]
 
                         def decode(l):
-                            # 确保正确反向映射所有token
-                            original_ids = [new2old.get(id, 0) for id in l if id in new2old]
+                            # 使用默认值策略处理所有token
+                            original_ids = [new2old.get(id, new2old.get(0, 0)) for id in l]
                             return safe_decode(tokenizer.decode, original_ids)
                     else:
                         # 找不到tokenizer文件提示
@@ -163,12 +163,12 @@ def generate_text(
 
                 def encode(s):
                     ids = enc.encode(s, allowed_special={"<|endoftext|>"})
-                    # 原始ID映射到训练时使用的新ID
-                    return [old2new.get(id, 0) for id in ids if id in old2new]
+                    # 使用默认值策略保留所有token
+                    return [old2new.get(id, old2new.get(0, 0)) for id in ids]
 
                 def decode(l):
-                    # 新ID映射回原始ID
-                    original_ids = [new2old.get(id, 0) for id in l]
+                    # 使用默认值策略处理所有token
+                    original_ids = [new2old.get(id, new2old.get(0, 0)) for id in l]
                     return safe_decode(enc.decode, original_ids)
 
             else:
