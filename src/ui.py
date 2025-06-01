@@ -1162,17 +1162,21 @@ def build_app_interface(selected_lang: str = "zh"):
                     dbm.delete_model(int(sel.split(" - ")[0]))
                 except Exception as e:
                     print(f"Error deleting model: {e}") # Log error
-            # After deleting, reset UI and refresh choices
+            # 获取更新后的模型列表
             updated_choices = _get_model_choices_list()
-            # The first output is model_dropdown itself
-            return [gr.update(choices=updated_choices, value=None)] + _reset_updates()
+            # 更新主下拉框和对比页面的两个下拉框
+            main_dropdown_update = gr.update(choices=updated_choices, value=None)
+            comp_left_update = gr.update(choices=updated_choices)
+            comp_right_update = gr.update(choices=updated_choices)
+            # 返回更新后的下拉框以及其他重置组件
+            return [main_dropdown_update, comp_left_update, comp_right_update] + _reset_updates()
 
 
         delete_model_btn.click(
             fn=delete_model_cb,
             inputs=[model_dropdown],
-            # The first output is model_dropdown, then the rest are from _reset_updates
-            outputs=[model_dropdown] + outputs_for_model_select_and_delete 
+            # 更新输出列表，包括主下拉框和对比页面的两个下拉框，然后是其他重置组件
+            outputs=[model_dropdown, comp_left_model, comp_right_model] + outputs_for_model_select_and_delete 
         )
 
         refresh_models_btn.click(
