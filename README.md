@@ -67,7 +67,7 @@ Open the displayed link in your browser (usually [http://localhost:7860](http://
 
 Here's a small example for demonstration:
 
-![Data Processing](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/en_data_process.png?raw=true)
+![Data Processing](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/imgs/en_data_process.png?raw=true)
 
 ### Step 2: Train the Model
 
@@ -83,7 +83,7 @@ Here's a small example for demonstration:
 * You should now see both loss curves updating dynamically.
 * Click "Start Training" and wait for training to complete.
 
-![Training](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/en_train.png?raw=true)
+![Training](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/imgs/en_train.png?raw=true)
 
 #### Evaluation Mode Only?
 
@@ -95,7 +95,7 @@ Here's a small example for demonstration:
 2. Enter a prompt
 3. Click "Generate" and see what the model comes up with!
 
-![Inference](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/en_inference.png?raw=true)
+![Inference](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/imgs/en_inference.png?raw=true)
 
 ### Step 4: Model Comparison
 
@@ -105,7 +105,7 @@ Here's a small example for demonstration:
 4. You can input the same prompt and see how both models generate text
 5. Or, apply different inference settings (temperature, top\_k, etc.) to compare outputs
 
-![Comparison](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/en_comparison.png?raw=true)
+![Comparison](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/imgs/en_comparison.png?raw=true)
 
 ## 📁 Project Structure
 

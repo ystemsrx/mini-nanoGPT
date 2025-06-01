@@ -59,7 +59,7 @@ python app.py
 - 完成后点击"开始处理"。
 这里我用一小段文本来举例：
 
-![数据处理](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/zh_data_process.png?raw=true)
+![数据处理](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/imgs/zh_data_process.png?raw=true)
 
 ### 第二步：训练模型
 - 切换到"训练"页面，根据需要调整参数（如果只是想体验，可以保持默认值）。
@@ -72,7 +72,7 @@ python app.py
 - 这样你应当能够正常的看到两条动态变化的曲线。
 - 点击"开始训练"，等待模型训练完成
 
-![训练流程](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/zh_train.png?raw=true)
+![训练流程](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/imgs/zh_train.png?raw=true)
 
 #### 仅评估模式？
 - 这个模式能够让你评估模型在验证集上的损失。请将`评估种子数量 (Number of Evaluation Seeds)`调为大于0的任意值，将开启仅评估模式。你能看到模型在使用不同种子上的损失。
@@ -82,7 +82,7 @@ python app.py
 2. 输入一段开头文字
 3. 点击"生成"，看看模型会写出什么！
 
-![推理](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/zh_inference.png?raw=true)
+![推理](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/imgs/zh_inference.png?raw=true)
 
 ### 第四步：模型对比
 1. 进入"对比"页面
@@ -91,7 +91,7 @@ python app.py
 4. 同时，你也能使用同一个提示词同时生成文本，看看不同模型的表现。
 4. 或者，你也可以对两个模型使用不同的推理配置（例如温度、top_k 等）进行对比。
 
-![对比](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/zh_comparison.png?raw=true)
+![对比](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/imgs/zh_comparison.png?raw=true)
 
 ## 📁 项目结构
 ```
