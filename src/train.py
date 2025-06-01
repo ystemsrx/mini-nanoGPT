@@ -372,7 +372,6 @@ def train_model_generator(
 
     # ------------------------------------------------------------------------
     # EVALUATION-ONLY MODE
-    # ------------------------------------------------------------------------
     if num_eval_seeds > 0:
         if not has_val: # Should have been caught earlier, but double-check
             msg = f"Error: val.bin not found, critical for evaluation mode."

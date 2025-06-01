@@ -4,10 +4,8 @@ import pickle
 from contextlib import nullcontext
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn.functional as F
-from PIL import Image
 
 from src.config import DEFAULT_CONFIG
 from src.db_manager import DBManager
@@ -18,12 +16,12 @@ dbm = DBManager()
 
 def safe_decode(decode_func, tokens, fallback_char=""):
     """
-    安全解码函数，处理可能的解码错误
+    Safely decodes tokens, handling potential decoding errors.
     """
     try:
         return decode_func(tokens)
     except Exception:
-        # 如果解码失败，返回fallback字符
+        # Return the fallback character if decoding fails.
         return fallback_char
 
 def generate_text(
@@ -40,13 +38,13 @@ def generate_text(
     compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
 ):
     """
-    Generates text from a single checkpoint and把推理配置/历史写入数据库。
-    若 out_dir 以 .pt 结尾，则直接当作 ckpt 路径；否则默认 out_dir/ckpt.pt。
+    Generates text from a single checkpoint and writes inference configuration/history to the database.
+    If out_dir ends with .pt, it's treated as the checkpoint path; otherwise, out_dir/ckpt.pt is assumed.
     """
-    # ---------------- 0. Database: ensure model_id & record config ---------------- #
-    # -- DB Integration --
+    # Database: ensure model_id & record config
+    # DB Integration
     ckpt_dir = out_dir if out_dir.endswith('.pt') else os.path.join(out_dir, 'ckpt.pt')
-    model_dir_for_db = os.path.dirname(ckpt_dir)  # 用目录定位模型
+    model_dir_for_db = os.path.dirname(ckpt_dir)  # Use directory to locate the model
     model_name_for_db = os.path.basename(model_dir_for_db) or "new_model"
     model_id = dbm.get_model_id_by_dir(model_dir_for_db)
     if model_id is None:
@@ -66,7 +64,7 @@ def generate_text(
         compile_model=compile_model
     )
     dbm.save_inference_config(model_id, inf_cfg_dict)
-    # ------------------------------------------------------------------ #
+    # ...
 
     if not prompt.strip():
         yield "Prompt is empty, please provide a starting text."
@@ -82,7 +80,7 @@ def generate_text(
         ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
         ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
-        # ----------- 1. Analyze ckpt path -----------
+        # Analyze checkpoint path
         ckpt_path = ckpt_dir
         if not os.path.exists(ckpt_path):
             err = f"Error: checkpoint not found at {ckpt_path}."
@@ -165,40 +163,40 @@ def generate_text(
         tokenizer_type = meta.get('tokenizer', 'character level')
         stoi, itos = meta['stoi'], meta['itos']
 
-        # 如果meta中有old2new映射，说明使用了tokenizer
+        # If 'old2new' mapping exists in meta, a tokenizer was used.
         if 'old2new' in meta:
             old2new = meta['old2new']
             new2old = {new: old for old, new in old2new.items()}
 
-            # 根据tokenizer类型选择不同的编解码方法
+            # Choose encoding/decoding methods based on tokenizer type.
             if tokenizer_type == 'custom_json':
                 try:
                     from tokenizers import Tokenizer
-                    # 修改为与data_process.py相同的查找路径
+                    # Changed to use the same search path as data_process.py
                     tokenizer_path = os.path.join(Path.cwd(), "assets/tokenizer.json")
                     if os.path.exists(tokenizer_path):
                         tokenizer = Tokenizer.from_file(tokenizer_path)
 
                         def encode(s):
-                            # 确保正确分词完整提示词
+                            # Ensure the full prompt is tokenized correctly.
                             ids = tokenizer.encode(s).ids
-                            # 使用默认值策略保留所有token
+                            # Use a default value strategy to retain all tokens.
                             return [old2new.get(id, old2new.get(0, 0)) for id in ids]
 
                         def decode(l):
-                            # 使用默认值策略处理所有token
+                            # Use a default value strategy to process all tokens.
                             original_ids = [new2old.get(id, new2old.get(0, 0)) for id in l]
                             return safe_decode(tokenizer.decode, original_ids)
                     else:
-                        # 找不到tokenizer文件提示
+                        # Tokenizer file not found warning.
                         print(f"Warning: fail to find tokenizer file: {tokenizer_path}")
-                        # 使用meta中的映射
+                        # Use mappings from meta.
                         def encode(s):
                             return [stoi.get(ch, 0) for ch in s]
                         def decode(l):
                             return ''.join([itos.get(i, '') for i in l])
                 except ImportError:
-                    # 找不到tokenizers库，使用meta中的映射
+                    # Tokenizers library not found, use mappings from meta.
                     def encode(s):
                         return [stoi.get(ch, 0) for ch in s]
                     def decode(l):
@@ -210,28 +208,28 @@ def generate_text(
 
                 def encode(s):
                     ids = enc.encode(s, allowed_special={"<|endoftext|>"})
-                    # 使用默认值策略保留所有token
+                    # Use a default value strategy to retain all tokens.
                     return [old2new.get(id, old2new.get(0, 0)) for id in ids]
 
                 def decode(l):
-                    # 使用默认值策略处理所有token
+                    # Use a default value strategy to process all tokens.
                     original_ids = [new2old.get(id, new2old.get(0, 0)) for id in l]
                     return safe_decode(enc.decode, original_ids)
 
             else:
-                # 默认方式
+                # Default method.
                 def encode(s):
                     return [stoi.get(ch, 0) for ch in s]
                 def decode(l):
                     return ''.join([itos.get(i, '') for i in l])
         else:
-            # 字符级编码（没有ID重映射）
+            # Character-level encoding (no ID remapping).
             def encode(s):
                 return [stoi.get(ch, 0) for ch in s]
             def decode(l):
                 return ''.join([itos.get(i, '') for i in l])
 
-        # 在生成前添加提示词分词验证
+        # Add prompt tokenization validation before generation.
         encoded_prompt = encode(prompt)
         decoded_prompt = decode(encoded_prompt)
         if decoded_prompt != prompt:
@@ -244,24 +242,24 @@ def generate_text(
             yield f"Error: input length ({xids.size(1)}) exceeds block size ({block_size})."
             return
 
-        # ----------- 3. Generate text & accumulate output ------------
+        # Generate text & accumulate output
         accumulated_output = []
         with torch.no_grad():
             with ctx:
                 for s_i in range(num_samples):
-                    # 每个样本开始时输出标题
+                    # Output title at the start of each sample.
                     sample_header = f"Sample {s_i+1}:\n"
                     yield sample_header
 
                     idx = xids.clone()
-                    # 先输出提示词部分
+                    # First, output the prompt part.
                     current_text = prompt
                     yield current_text
                     
-                    # 用于存储当前样本的完整生成序列
+                    # Used to store the complete generated sequence for the current sample.
                     generated_tokens = []
                     last_valid_text = prompt
-                    buffer_size = 5  # 缓冲区大小，用于处理多字节字符
+                    buffer_size = 5  # Buffer size for handling multi-byte characters.
                     
                     for token_i in range(max_new_tokens):
                         if idx.size(1) == 0:
@@ -279,49 +277,49 @@ def generate_text(
                         idx_next = torch.multinomial(probs, num_samples=1)
                         idx = torch.cat((idx, idx_next), dim=1)
 
-                        # 将新生成的token添加到列表中
+                        # Add the newly generated token to the list.
                         new_token = idx_next[0].item()
                         generated_tokens.append(new_token)
 
-                        # 尝试解码当前的token序列
-                        # 对于使用tokenizer的情况，使用缓冲策略
+                        # Attempt to decode the current token sequence.
+                        # When using a tokenizer, decode the sequence.
                         if 'old2new' in meta and tokenizer_type in ['custom_json', 'gpt2']:
-                            # 解码整个序列，不使用缓冲区
+                            # Decode the entire sequence.
                             full_tokens = idx[0].tolist()
                             current_text = decode(full_tokens)
                             
-                            # 只输出新增的有效部分
+                            # Only output the newly added valid part.
                             if len(current_text) > len(last_valid_text):
                                 new_text = current_text[len(last_valid_text):]
                                 yield new_text
                                 last_valid_text = current_text
                         else:
-                            # 字符级编码，每个token都对应一个字符，可以直接解码
+                            # Character-level encoding, each token corresponds to a character, can be decoded directly.
                             current_text = decode(idx[0].tolist())
                             new_text = current_text[len(last_valid_text):]
                             yield new_text
                             last_valid_text = current_text
 
-                    # 样本生成完毕，确保最后的内容被完整解码
+                    # Sample generation finished, ensure the final content is fully decoded.
                     final_text = decode(idx[0].tolist())
                     if len(final_text) > len(last_valid_text):
                         remaining_text = final_text[len(last_valid_text):]
                         if " " not in remaining_text:
                             yield remaining_text
 
-                    # 保存完整样本
+                    # Save the complete sample.
                     full_sample = f"{sample_header}{final_text}"
                     accumulated_output.append(full_sample)
 
-                    # 样本之间添加分隔线
+                    # Add a separator line between samples.
                     if s_i < num_samples - 1:
                         separator = "\n" + "-" * 30 + "\n"
                         yield separator
 
         final_text = "\n\n".join(accumulated_output)
 
-        # ---------------- 3. Write inference history to DB ------------------ #
-        # -- DB Integration --
+        # Write inference history to DB
+        # DB Integration
         dbm.save_inference_history(model_id, final_text)
 
     except Exception as ex:
