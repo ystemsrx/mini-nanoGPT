@@ -44,7 +44,7 @@ def _encode_custom_chunk(chunk: str, tokenizer_path: str):
     """
     Load local assets/tokenizer.json and encode a chunk of text.
     """
-    from tokenizers import Tokenizer        # 局部 import，主进程无需强依赖
+    from tokenizers import Tokenizer
     tok = Tokenizer.from_file(tokenizer_path)
     return tok.encode(chunk).ids
 
@@ -219,6 +219,11 @@ def process_data(
 
         if no_validation:
             splits = {"train": tokens}
+            # 删除可能存在的旧验证集文件
+            val_bin_path = os.path.join(processed_dir, "val.bin")
+            if os.path.exists(val_bin_path):
+                os.remove(val_bin_path)
+                print(f"Removed old validation set file: {val_bin_path}")
         else:
             split_at = int(len(tokens) * train_split_ratio)
             splits = {"train": tokens[:split_at], "val": tokens[split_at:]}
@@ -271,6 +276,11 @@ def process_data(
         if no_validation:
             train_ids = np.array(encoded, dtype=IntegerTypes)
             val_ids = None
+            # 删除可能存在的旧验证集文件
+            val_bin_path = os.path.join(processed_dir, "val.bin")
+            if os.path.exists(val_bin_path):
+                os.remove(val_bin_path)
+                print(f"Removed old validation set file: {val_bin_path}")
         else:
             split_at = int(len(encoded) * train_split_ratio)
             train_ids = np.array(encoded[:split_at], dtype=IntegerTypes)

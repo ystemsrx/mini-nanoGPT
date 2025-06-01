@@ -66,7 +66,6 @@ DEFAULT_CONFIG = {
         "use_flash_attn": False,
         "pos_encoding_type": "rope",
         "rope_base": 10000,
-        # New optimized parameters - removes hardcoded values
         "rope_cache_size": 1024,  # Dynamic RoPE cache size (None for auto)
         "alibi_bias_scale": 1.0,  # ALiBi bias scaling factor
         "ffn_activation": "gelu",  # FFN activation function: gelu, relu, swish
