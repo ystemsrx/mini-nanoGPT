@@ -100,7 +100,7 @@ class DBManager:
            If the provided `dir_path` is already registered,
            return its ID directly and do not attempt to update
            its name, avoiding unintended renaming to long
-           strings like “test_1747405262784”.
+           strings like "test_1747405262784".
 
         Parameters:
         name: Display name for the model (visible in UI)
@@ -173,6 +173,7 @@ class DBManager:
         """
         - Update the model's name and directory path in the database.
         - Synchronously rename both ./data/{old} and ./out/{old} directories.
+        - Update training log path if it exists to reflect the new directory structure.
         """
         info = self.get_model_basic_info(model_id)
         if not info:
@@ -191,11 +192,26 @@ class DBManager:
         if os.path.exists(old_data_abs):
             os.rename(old_data_abs, new_data_abs)
 
+        # Update the model record with new name and directory path
         cur = self.conn.cursor()
         cur.execute(
             "UPDATE models SET name = ?, dir_path = ? WHERE id = ?",
             (new_name, self._rel(new_out_abs), model_id)
         )
+        
+        # Update training log path if it exists
+        cur.execute("SELECT log_path FROM training_logs WHERE model_id = ?", (model_id,))
+        log_row = cur.fetchone()
+        if log_row:
+            old_log_path = log_row["log_path"]
+            # Replace the old folder name with new folder name in the log path
+            if old_folder in old_log_path:
+                new_log_path = old_log_path.replace(old_folder, new_folder)
+                cur.execute(
+                    "UPDATE training_logs SET log_path = ? WHERE model_id = ?",
+                    (new_log_path, model_id)
+                )
+        
         self.conn.commit()
 
     # ------------------------------------------------------------------ #

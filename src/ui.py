@@ -1335,11 +1335,18 @@ def build_app_interface(selected_lang: str = "zh"):
             info = dbm.get_model_basic_info(mid) or {}
             name = info.get("name", "unknown_model") # Default name
 
-            folder_name_part = "".join(c if c.isalnum() or c in ['_','-'] else '_' for c in name) # Basic sanitize
-            folder = f"{folder_name_part}_{mid}"
-
-            data_processed_dir = os.path.join("data", folder, "processed")
-            out_dir_root = os.path.join("out", folder)
+            # Use the actual directory path from database instead of reconstructing
+            if "dir_path" in info:
+                out_dir_root = info["dir_path"]
+                # Extract folder name from the stored path for data directory
+                folder = os.path.basename(out_dir_root)
+                data_processed_dir = os.path.join("data", folder, "processed")
+            else:
+                # Fallback to old behavior if dir_path not available (shouldn't happen)
+                folder_name_part = "".join(c if c.isalnum() or c in ['_','-'] else '_' for c in name)
+                folder = f"{folder_name_part}_{mid}"
+                data_processed_dir = os.path.join("data", folder, "processed")
+                out_dir_root = os.path.join("out", folder)
 
             def _cfg(k, default_val_from_const): return cfg.get(k, default_val_from_const)
             def _ic(k, default_val_from_const): return icfg.get(k, default_val_from_const)
@@ -1747,11 +1754,18 @@ def build_app_interface(selected_lang: str = "zh"):
             info = dbm.get_model_basic_info(mid) or {}
             name = info.get("name", "unknown_model")
             
-            # Prepare directories
-            folder_name_part = "".join(c if c.isalnum() or c in ['_','-'] else '_' for c in name)
-            folder = f"{folder_name_part}_{mid}"
-            data_processed_dir = os.path.join("data", folder, "processed")
-            out_dir_root = os.path.join("out", folder)
+            # Use the actual directory path from database instead of reconstructing
+            if "dir_path" in info:
+                out_dir_root = info["dir_path"]
+                # Extract folder name from the stored path for data directory
+                folder = os.path.basename(out_dir_root)
+                data_processed_dir = os.path.join("data", folder, "processed")
+            else:
+                # Fallback to old behavior if dir_path not available (shouldn't happen)
+                folder_name_part = "".join(c if c.isalnum() or c in ['_','-'] else '_' for c in name)
+                folder = f"{folder_name_part}_{mid}"
+                data_processed_dir = os.path.join("data", folder, "processed")
+                out_dir_root = os.path.join("out", folder)
 
             # Generate loss curve
             loss_log_path = dbm.get_training_log_path(mid)

@@ -78,6 +78,62 @@ def process_data(
             raise ValueError(f"Model {model_id} does not exist.")
         if info["name"] != model_name:
             dbm.rename_model(model_id, model_name)
+            # Update info after renaming
+            info = dbm.get_model_basic_info(model_id)
+        
+        # Check if we have new data to process
+        has_new_data = bool(input_text.strip() or (input_dir.strip() and os.path.exists(input_dir.strip())))
+        
+        if not has_new_data:
+            # Only renaming, no data processing needed
+            # Return existing model information
+            raw_dir, processed_dir, _ = compose_model_dirs(model_name, model_id)
+            
+            # Try to get existing vocab_size from meta.pkl
+            meta_path = os.path.join(processed_dir, 'meta.pkl')
+            vocab_size = 0
+            train_size = 0
+            val_size = 0
+            tokenizer_name = "unknown"
+            
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, 'rb') as f:
+                        meta = pickle.load(f)
+                    vocab_size = meta.get('vocab_size', 0)
+                    tokenizer_name = meta.get('tokenizer', 'unknown')
+                except Exception as e:
+                    print(f"Warning: Could not read meta.pkl: {e}")
+            
+            # Try to get dataset sizes from existing bin files
+            train_bin_path = os.path.join(processed_dir, 'train.bin')
+            val_bin_path = os.path.join(processed_dir, 'val.bin')
+            
+            if os.path.exists(train_bin_path):
+                try:
+                    train_data = np.memmap(train_bin_path, dtype=IntegerTypes, mode='r')
+                    train_size = len(train_data)
+                except Exception as e:
+                    print(f"Warning: Could not read train.bin: {e}")
+            
+            if os.path.exists(val_bin_path):
+                try:
+                    val_data = np.memmap(val_bin_path, dtype=IntegerTypes, mode='r')
+                    val_size = len(val_data)
+                except Exception as e:
+                    print(f"Warning: Could not read val.bin: {e}")
+            
+            res = {
+                "model_id": model_id,
+                "processed_data_dir": processed_dir,
+                "vocab_size": vocab_size,
+                "train_size": train_size,
+                "tokenizer": tokenizer_name
+            }
+            if val_size > 0:
+                res["val_size"] = val_size
+            
+            return res
 
     raw_dir, processed_dir, _ = compose_model_dirs(model_name, model_id)
     os.makedirs(raw_dir, exist_ok=True)
@@ -86,9 +142,11 @@ def process_data(
     # -------- 1. 读取文本 -------- #
     data = input_text.strip()
     if not data and input_dir.strip():
-        for fn in (f for f in os.listdir(input_dir) if f.endswith(".txt")):
-            with open(os.path.join(input_dir, fn), "r", encoding="utf-8") as f:
-                data += f.read()
+        input_dir_abs = input_dir.strip()
+        if os.path.exists(input_dir_abs):
+            for fn in (f for f in os.listdir(input_dir_abs) if f.endswith(".txt")):
+                with open(os.path.join(input_dir_abs, fn), "r", encoding="utf-8") as f:
+                    data += f.read()
     if not data:
         raise ValueError("It seems that you haven't provided any text. Please check your input.")
 
