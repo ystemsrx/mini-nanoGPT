@@ -617,10 +617,77 @@ def build_app_interface(selected_lang: str = "zh"):
                             value=DEFAULT_CONFIG["training"]["pos_encoding_type"],
                             visible=False
                         )
+                    
+                    # New optimized parameters - row 1
+                    with gr.Row():
                         rope_base_box = gr.Number(
                             label=T["train_rope_base"],
                             value=DEFAULT_CONFIG["training"]["rope_base"],
                             visible=False
+                        )
+                        rope_cache_size_box = gr.Number(
+                            label=T["train_rope_cache_size"],
+                            value=DEFAULT_CONFIG["training"]["rope_cache_size"],
+                            visible=False,
+                            info="Cache size for RoPE (0 for auto)"
+                        )
+                        alibi_bias_scale_box = gr.Number(
+                            label=T["train_alibi_bias_scale"],
+                            value=DEFAULT_CONFIG["training"]["alibi_bias_scale"],
+                            step=0.1,
+                            visible=False,
+                            info="Scaling factor for ALiBi bias"
+                        )
+                        ffn_activation_box = gr.Dropdown(
+                            label=T["train_ffn_activation"],
+                            choices=["gelu", "relu", "swish"],
+                            value=DEFAULT_CONFIG["training"]["ffn_activation"],
+                            visible=False,
+                            info="FFN activation function"
+                        )
+                    
+                    # New optimized parameters - row 2
+                    with gr.Row():
+                        attention_scale_factor_box = gr.Number(
+                            label=T["train_attention_scale_factor"],
+                            value=DEFAULT_CONFIG["training"]["attention_scale_factor"],
+                            step=0.1,
+                            visible=False,
+                            info="Additional attention scaling"
+                        )
+                        gradient_checkpointing_box = gr.Checkbox(
+                            label=T["train_gradient_checkpointing"],
+                            value=DEFAULT_CONFIG["training"]["gradient_checkpointing"],
+                            visible=False,
+                            info="Enable gradient checkpointing to save memory"
+                        )
+                        cache_strategy_box = gr.Dropdown(
+                            label=T["train_cache_strategy"],
+                            choices=["adaptive", "fixed", "minimal"],
+                            value=DEFAULT_CONFIG["training"]["cache_strategy"],
+                            visible=False,
+                            info="Cache allocation strategy"
+                        )
+                        max_cache_size_box = gr.Number(
+                            label=T["train_max_cache_size"],
+                            value=DEFAULT_CONFIG["training"]["max_cache_size"],
+                            visible=False,
+                            info="Maximum cache size for dynamic allocation"
+                        )
+                    
+                    # Error handling parameters
+                    with gr.Row():
+                        strict_validation_box = gr.Checkbox(
+                            label=T["train_strict_validation"],
+                            value=DEFAULT_CONFIG["training"]["strict_validation"],
+                            visible=False,
+                            info="Enable strict input validation"
+                        )
+                        fallback_on_error_box = gr.Checkbox(
+                            label=T["train_fallback_on_error"],
+                            value=DEFAULT_CONFIG["training"]["fallback_on_error"],
+                            visible=False,
+                            info="Fallback to basic implementations on error"
                         )
 
                 train_btn = gr.Button(T["train_start_btn"])
@@ -866,7 +933,17 @@ def build_app_interface(selected_lang: str = "zh"):
                     gr.update(visible=True, value=defaults_train["init_std"]),         # init_std_box
                     gr.update(visible=True, value=defaults_train["use_flash_attn"]),   # use_flash_attn_box
                     gr.update(visible=True, value=defaults_train["pos_encoding_type"]), # pos_encoding_type_box
-                    gr.update(visible=True, value=defaults_train["rope_base"])         # rope_base_box
+                    gr.update(visible=True, value=defaults_train["rope_base"]),        # rope_base_box
+                    # New optimized parameters
+                    gr.update(visible=True, value=defaults_train["rope_cache_size"]),  # rope_cache_size_box
+                    gr.update(visible=True, value=defaults_train["alibi_bias_scale"]), # alibi_bias_scale_box
+                    gr.update(visible=True, value=defaults_train["ffn_activation"]),   # ffn_activation_box
+                    gr.update(visible=True, value=defaults_train["attention_scale_factor"]), # attention_scale_factor_box
+                    gr.update(visible=True, value=defaults_train["gradient_checkpointing"]), # gradient_checkpointing_box
+                    gr.update(visible=True, value=defaults_train["cache_strategy"]),   # cache_strategy_box
+                    gr.update(visible=True, value=defaults_train["max_cache_size"]),   # max_cache_size_box
+                    gr.update(visible=True, value=defaults_train["strict_validation"]), # strict_validation_box
+                    gr.update(visible=True, value=defaults_train["fallback_on_error"]) # fallback_on_error_box
                 ]
             else:
                 return [
@@ -878,7 +955,17 @@ def build_app_interface(selected_lang: str = "zh"):
                     gr.update(visible=False),  # init_std_box
                     gr.update(visible=False),  # use_flash_attn_box
                     gr.update(visible=False),  # pos_encoding_type_box
-                    gr.update(visible=False)   # rope_base_box
+                    gr.update(visible=False),  # rope_base_box
+                    # New optimized parameters
+                    gr.update(visible=False),  # rope_cache_size_box
+                    gr.update(visible=False),  # alibi_bias_scale_box
+                    gr.update(visible=False),  # ffn_activation_box
+                    gr.update(visible=False),  # attention_scale_factor_box
+                    gr.update(visible=False),  # gradient_checkpointing_box
+                    gr.update(visible=False),  # cache_strategy_box
+                    gr.update(visible=False),  # max_cache_size_box
+                    gr.update(visible=False),  # strict_validation_box
+                    gr.update(visible=False)   # fallback_on_error_box
                 ]
 
         use_self_attention_box.change(
@@ -887,7 +974,11 @@ def build_app_interface(selected_lang: str = "zh"):
             outputs=[
                 ffn_hidden_mult_box, qkv_bias_box, attn_dropout_box, resid_dropout_box,
                 ln_eps_box, init_std_box, use_flash_attn_box, pos_encoding_type_box,
-                rope_base_box
+                rope_base_box,
+                # New optimized parameters
+                rope_cache_size_box, alibi_bias_scale_box, ffn_activation_box, attention_scale_factor_box,
+                gradient_checkpointing_box, cache_strategy_box, max_cache_size_box,
+                strict_validation_box, fallback_on_error_box
             ]
         )
         
@@ -909,23 +1000,75 @@ def build_app_interface(selected_lang: str = "zh"):
             seed_, save_interval_,
             # Self-attention parameters
             use_self_attention_, ffn_hidden_mult_, qkv_bias_, attn_dropout_, 
-            resid_dropout_, ln_eps_, init_std_, use_flash_attn_, pos_encoding_type_, rope_base_
+            resid_dropout_, ln_eps_, init_std_, use_flash_attn_, pos_encoding_type_, rope_base_,
+            # New optimized parameters
+            rope_cache_size_, alibi_bias_scale_, ffn_activation_, attention_scale_factor_,
+            gradient_checkpointing_, cache_strategy_, max_cache_size_, strict_validation_, fallback_on_error_
         ):
             empty_plot_html = generate_loss_chart_html([], [])
+            
+            # Enhanced input validation with better error messages
             try:
-                # Convert Number inputs safely
+                # Convert Number inputs safely with improved error handling
                 num_eval_seeds_int = int(float(num_eval_seeds_))
                 if not (0 <= num_eval_seeds_int <= 2**32 - 1):
-                    raise ValueError("num_eval_seeds out of range")
+                    raise ValueError(f"num_eval_seeds must be between 0 and {2**32 - 1}, got {num_eval_seeds_int}")
+                
+                # Validate new parameters
+                rope_cache_size_int = None if rope_cache_size_ == 0 else int(float(rope_cache_size_))
+                if rope_cache_size_int is not None and rope_cache_size_int < 0:
+                    raise ValueError(f"rope_cache_size must be non-negative or 0 for auto, got {rope_cache_size_int}")
+                
+                alibi_bias_scale_float = float(alibi_bias_scale_)
+                if alibi_bias_scale_float <= 0:
+                    raise ValueError(f"alibi_bias_scale must be positive, got {alibi_bias_scale_float}")
+                
+                attention_scale_factor_float = float(attention_scale_factor_)
+                if attention_scale_factor_float <= 0:
+                    raise ValueError(f"attention_scale_factor must be positive, got {attention_scale_factor_float}")
+                
+                max_cache_size_int = int(float(max_cache_size_))
+                if max_cache_size_int <= 0:
+                    raise ValueError(f"max_cache_size must be positive, got {max_cache_size_int}")
+                
+                # Validate FFN activation
+                if ffn_activation_ not in ["gelu", "relu", "swish"]:
+                    raise ValueError(f"ffn_activation must be one of ['gelu', 'relu', 'swish'], got {ffn_activation_}")
+                
+                # Validate cache strategy
+                if cache_strategy_ not in ["adaptive", "fixed", "minimal"]:
+                    raise ValueError(f"cache_strategy must be one of ['adaptive', 'fixed', 'minimal'], got {cache_strategy_}")
+                    
             except ValueError as e:
-                yield (f"<div style='color:red;'>Configuration Error: {str(e)}</div>", str(e), empty_plot_html)
+                error_msg = f"Parameter validation error: {str(e)}"
+                yield (f"<div style='color:red;'>{error_msg}</div>", error_msg, empty_plot_html)
                 return
 
             try:
                 defaults_train = DEFAULT_CONFIG["training"]
-                def safe_int(v, default_val): return default_val if v == "" or v is None else int(float(v))
-                def safe_float(v, default_val): return default_val if v == "" or v is None else float(v)
-                def safe_bool(v, default_val): return default_val if v is None else bool(v)
+                def safe_int(v, default_val): 
+                    try:
+                        return default_val if v == "" or v is None else int(float(v))
+                    except (ValueError, TypeError):
+                        return default_val
+                        
+                def safe_float(v, default_val): 
+                    try:
+                        return default_val if v == "" or v is None else float(v)
+                    except (ValueError, TypeError):
+                        return default_val
+                        
+                def safe_bool(v, default_val): 
+                    try:
+                        return default_val if v is None else bool(v)
+                    except (ValueError, TypeError):
+                        return default_val
+                
+                def safe_str(v, default_val):
+                    try:
+                        return default_val if v is None or v == "" else str(v)
+                    except (ValueError, TypeError):
+                        return default_val
 
                 gen = train_model_generator(
                     data_dir=data_dir_,
@@ -969,7 +1112,17 @@ def build_app_interface(selected_lang: str = "zh"):
                     init_std=safe_float(init_std_, defaults_train["init_std"]),
                     use_flash_attn=safe_bool(use_flash_attn_, defaults_train["use_flash_attn"]),
                     pos_encoding_type=pos_encoding_type_ if pos_encoding_type_ else defaults_train["pos_encoding_type"],
-                    rope_base=safe_int(rope_base_, defaults_train["rope_base"])
+                    rope_base=safe_int(rope_base_, defaults_train["rope_base"]),
+                    # New optimized parameters
+                    rope_cache_size=rope_cache_size_int,
+                    alibi_bias_scale=alibi_bias_scale_float,
+                    ffn_activation=safe_str(ffn_activation_, defaults_train["ffn_activation"]),
+                    attention_scale_factor=attention_scale_factor_float,
+                    gradient_checkpointing=safe_bool(gradient_checkpointing_, defaults_train["gradient_checkpointing"]),
+                    cache_strategy=safe_str(cache_strategy_, defaults_train["cache_strategy"]),
+                    max_cache_size=max_cache_size_int,
+                    strict_validation=safe_bool(strict_validation_, defaults_train["strict_validation"]),
+                    fallback_on_error=safe_bool(fallback_on_error_, defaults_train["fallback_on_error"])
                 )
                 
                 for p_html_progress, log_line_html, plot_data_tuple in gen:
@@ -1007,7 +1160,11 @@ def build_app_interface(selected_lang: str = "zh"):
                 # Self-attention parameters
                 use_self_attention_box, ffn_hidden_mult_box, qkv_bias_box, attn_dropout_box,
                 resid_dropout_box, ln_eps_box, init_std_box, use_flash_attn_box, pos_encoding_type_box,
-                rope_base_box
+                rope_base_box,
+                # New optimized parameters
+                rope_cache_size_box, alibi_bias_scale_box, ffn_activation_box, attention_scale_factor_box,
+                gradient_checkpointing_box, cache_strategy_box, max_cache_size_box,
+                strict_validation_box, fallback_on_error_box
             ],
             outputs=[train_progress, train_log, train_plot]
         )
@@ -1109,14 +1266,24 @@ def build_app_interface(selected_lang: str = "zh"):
                 self_attn_updates[6],  # use_flash_attn_box
                 self_attn_updates[7],  # pos_encoding_type_box
                 self_attn_updates[8],  # rope_base_box
-                generate_loss_chart_html([], []), # train_plot (HTML)
-                "",                               # train_log (empty string for HTML box)
-                _d(), _d(),                       # data_dir_inf, out_dir_inf
+                # New optimized parameters with default values
+                self_attn_updates[9],   # rope_cache_size_box
+                self_attn_updates[10],  # alibi_bias_scale_box
+                self_attn_updates[11],  # ffn_activation_box
+                self_attn_updates[12],  # attention_scale_factor_box
+                self_attn_updates[13],  # gradient_checkpointing_box
+                self_attn_updates[14],  # cache_strategy_box
+                self_attn_updates[15],  # max_cache_size_box
+                self_attn_updates[16],  # strict_validation_box
+                self_attn_updates[17],  # fallback_on_error_box
+                generate_loss_chart_html([], []),        # train_plot (HTML)
+                "",                   # train_log (string for HTML box)
+                _d(), _d(),           # data_dir_inf, out_dir_inf
                 _d(d_inf["prompt"]),
                 _d(d_inf["num_samples"]), _d(d_inf["max_new_tokens"]),
-                _d(d_inf["temperature"]), _d(d_inf["top_k"]), 
+                _d(d_inf["temperature"]), _d(d_inf["top_k"]),
                 _d(d_inf["seed"]), # seed_box_inf
-                gr.update(), # inf_btn (添加缺失的组件)
+                gr.update(), # inf_btn
                 ""                 # inf_output
             ]
             
@@ -1124,12 +1291,12 @@ def build_app_interface(selected_lang: str = "zh"):
             comparison_updates = [
                 gr.update(), # comp_left_model
                 gr.update(), # comp_right_model
-                gr.update(value={}), # comp_left_params
-                gr.update(value={}), # comp_right_params
-                gr.update(value=generate_loss_chart_html([], [])), # comp_left_plot
-                gr.update(value=generate_loss_chart_html([], [])), # comp_right_plot
-                gr.update(value=""), # comp_left_history
-                gr.update(value=""), # comp_right_history
+                gr.update(), # comp_left_params
+                gr.update(), # comp_right_params
+                gr.update(), # comp_left_plot
+                gr.update(), # comp_right_plot
+                gr.update(), # comp_left_history
+                gr.update(), # comp_right_history
                 # 左侧模型参数
                 _d(d_inf["num_samples"]), # comp_left_num_samples
                 _d(d_inf["max_new_tokens"]), # comp_left_max_tokens
@@ -1145,7 +1312,12 @@ def build_app_interface(selected_lang: str = "zh"):
                 _d(d_inf["prompt"]), # comp_prompt
                 gr.update(), # comp_generate_btn (不重置)
                 gr.update(value=""), # comp_left_output
-                gr.update(value="")  # comp_right_output
+                gr.update(value=""), # comp_right_output
+                # Hidden comparison fields
+                _d(), # comp_left_data_dir
+                _d(), # comp_left_out_dir
+                _d(), # comp_right_data_dir
+                _d()  # comp_right_out_dir
             ]
             
             return base_updates + comparison_updates
@@ -1266,6 +1438,16 @@ def build_app_interface(selected_lang: str = "zh"):
                 self_attn_updates[6] if use_self_attention else gr.update(visible=False, value=_cfg("use_flash_attn", d_train_defaults["use_flash_attn"])),
                 self_attn_updates[7] if use_self_attention else gr.update(visible=False, value=_cfg("pos_encoding_type", d_train_defaults["pos_encoding_type"])),
                 self_attn_updates[8] if use_self_attention else gr.update(visible=False, value=_cfg("rope_base", d_train_defaults["rope_base"])),
+                # New optimized parameters - with enhanced default handling
+                self_attn_updates[9] if use_self_attention else gr.update(visible=False, value=_cfg("rope_cache_size", d_train_defaults["rope_cache_size"])),
+                self_attn_updates[10] if use_self_attention else gr.update(visible=False, value=_cfg("alibi_bias_scale", d_train_defaults["alibi_bias_scale"])),
+                self_attn_updates[11] if use_self_attention else gr.update(visible=False, value=_cfg("ffn_activation", d_train_defaults["ffn_activation"])),
+                self_attn_updates[12] if use_self_attention else gr.update(visible=False, value=_cfg("attention_scale_factor", d_train_defaults["attention_scale_factor"])),
+                self_attn_updates[13] if use_self_attention else gr.update(visible=False, value=_cfg("gradient_checkpointing", d_train_defaults["gradient_checkpointing"])),
+                self_attn_updates[14] if use_self_attention else gr.update(visible=False, value=_cfg("cache_strategy", d_train_defaults["cache_strategy"])),
+                self_attn_updates[15] if use_self_attention else gr.update(visible=False, value=_cfg("max_cache_size", d_train_defaults["max_cache_size"])),
+                self_attn_updates[16] if use_self_attention else gr.update(visible=False, value=_cfg("strict_validation", d_train_defaults["strict_validation"])),
+                self_attn_updates[17] if use_self_attention else gr.update(visible=False, value=_cfg("fallback_on_error", d_train_defaults["fallback_on_error"])),
                 loss_plot_html_content,        # train_plot (HTML)
                 train_log_s,                   # train_log (string for HTML box)
                 gr.update(value=data_processed_dir), # data_dir_inf (infer tab)
@@ -1276,7 +1458,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(value=_ic("temperature", d_inf_defaults["temperature"])),
                 gr.update(value=_ic("top_k", d_inf_defaults["top_k"])),
                 gr.update(value=_ic("seed", d_inf_defaults["seed"])), # seed_box_inf
-                gr.update(), # inf_btn
+                gr.update(), # inf_btn (添加缺失的组件)
                 inference_history # inf_output
             ]
             
@@ -1305,7 +1487,12 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(value=_ic("prompt", d_inf_defaults["prompt"])), # comp_prompt
                 gr.update(), # comp_generate_btn
                 gr.update(), # comp_left_output
-                gr.update()  # comp_right_output
+                gr.update(), # comp_right_output
+                # Hidden comparison fields
+                gr.update(value=""), # comp_left_data_dir
+                gr.update(value=""), # comp_left_out_dir
+                gr.update(value=""), # comp_right_data_dir
+                gr.update(value="")  # comp_right_out_dir
             ]
             
             return base_updates + comparison_updates
@@ -1329,6 +1516,10 @@ def build_app_interface(selected_lang: str = "zh"):
             use_self_attention_box, ffn_hidden_mult_box, qkv_bias_box, attn_dropout_box,
             resid_dropout_box, ln_eps_box, init_std_box, use_flash_attn_box, pos_encoding_type_box,
             rope_base_box,
+            # New optimized parameters - ADD THESE MISSING ONES
+            rope_cache_size_box, alibi_bias_scale_box, ffn_activation_box, attention_scale_factor_box,
+            gradient_checkpointing_box, cache_strategy_box, max_cache_size_box,
+            strict_validation_box, fallback_on_error_box,
             train_plot, train_log,
             data_dir_inf, out_dir_inf,
             prompt_box, num_samples_box, max_new_tokens_box,
@@ -1344,8 +1535,9 @@ def build_app_interface(selected_lang: str = "zh"):
             comp_right_num_samples, comp_right_max_tokens, 
             comp_right_temperature, comp_right_top_k, comp_right_seed,
             comp_prompt, comp_generate_btn,
-            comp_left_output, comp_right_output
-            # 删除重复的自注意力参数部分
+            comp_left_output, comp_right_output,
+            # ADD MISSING HIDDEN FIELDS
+            comp_left_data_dir, comp_left_out_dir, comp_right_data_dir, comp_right_out_dir
         ]
         model_dropdown.change(
             fn=select_model_cb,
@@ -1451,6 +1643,16 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(label=Tn["train_use_flash_attn"]),     # use_flash_attn_box
                 gr.update(label=Tn["train_pos_encoding_type"]),  # pos_encoding_type_box
                 gr.update(label=Tn["train_rope_base"]),          # rope_base_box
+                # New optimized parameters
+                gr.update(label=Tn["train_rope_cache_size"]),
+                gr.update(label=Tn["train_alibi_bias_scale"]),
+                gr.update(label=Tn["train_ffn_activation"]),
+                gr.update(label=Tn["train_attention_scale_factor"]),
+                gr.update(label=Tn["train_gradient_checkpointing"]),
+                gr.update(label=Tn["train_cache_strategy"]),
+                gr.update(label=Tn["train_max_cache_size"]),
+                gr.update(label=Tn["train_strict_validation"]),
+                gr.update(label=Tn["train_fallback_on_error"]),
             ]
 
         lang_select_outputs = [
@@ -1489,7 +1691,11 @@ def build_app_interface(selected_lang: str = "zh"):
             # Self-attention parameters  
             self_attn_accordion, use_self_attention_box, ffn_hidden_mult_box, qkv_bias_box, attn_dropout_box,
             resid_dropout_box, ln_eps_box, init_std_box, use_flash_attn_box, 
-            pos_encoding_type_box, rope_base_box
+            pos_encoding_type_box, rope_base_box,
+            # New optimized parameters
+            rope_cache_size_box, alibi_bias_scale_box, ffn_activation_box, attention_scale_factor_box,
+            gradient_checkpointing_box, cache_strategy_box, max_cache_size_box,
+            strict_validation_box, fallback_on_error_box
         ]
 
         lang_select.change(

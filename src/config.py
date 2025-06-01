@@ -65,7 +65,19 @@ DEFAULT_CONFIG = {
         "init_std": 0.02,
         "use_flash_attn": False,
         "pos_encoding_type": "rope",
-        "rope_base": 10000
+        "rope_base": 10000,
+        # New optimized parameters - removes hardcoded values
+        "rope_cache_size": 1024,  # Dynamic RoPE cache size (None for auto)
+        "alibi_bias_scale": 1.0,  # ALiBi bias scaling factor
+        "ffn_activation": "gelu",  # FFN activation function: gelu, relu, swish
+        "attention_scale_factor": 1.0,  # Additional attention scaling
+        "gradient_checkpointing": False,  # Memory-efficient training
+        # Memory management
+        "cache_strategy": "adaptive",  # Cache allocation strategy: adaptive, fixed, minimal
+        "max_cache_size": 4096,  # Maximum cache size for dynamic allocation
+        # Error handling
+        "strict_validation": True,  # Enable strict input validation
+        "fallback_on_error": True  # Fallback to basic implementations on error
     },
     "inference": {
         "out_dir": "out",
@@ -160,6 +172,17 @@ LANG_JSON = {
         "train_use_flash_attn": "Use Flash Attention",
         "train_pos_encoding_type": "Position Encoding",
         "train_rope_base": "RoPE Base",
+
+        # New optimized parameters
+        "train_rope_cache_size": "RoPE Cache Size",
+        "train_alibi_bias_scale": "ALiBi Bias Scale",
+        "train_ffn_activation": "FFN Activation",
+        "train_attention_scale_factor": "Attention Scale",
+        "train_gradient_checkpointing": "Gradient Checkpointing",
+        "train_cache_strategy": "Cache Strategy",
+        "train_max_cache_size": "Max Cache Size",
+        "train_strict_validation": "Strict Validation",
+        "train_fallback_on_error": "Fallback on Error",
 
         "inf_out_dir": "Model Directory (ckpt.pt)",
         "inf_prompt": "Prompt",
@@ -275,6 +298,17 @@ LANG_JSON = {
         "train_use_flash_attn": "使用 Flash Attention (Use Flash Attention)",
         "train_pos_encoding_type": "位置编码类型 (Position Encoding)",
         "train_rope_base": "RoPE基数 (RoPE Base)",
+
+        # New optimized parameters
+        "train_rope_cache_size": "RoPE缓存大小 (RoPE Cache Size)",
+        "train_alibi_bias_scale": "ALiBi偏置缩放 (ALiBi Bias Scale)",
+        "train_ffn_activation": "FFN激活函数 (FFN Activation)",
+        "train_attention_scale_factor": "注意力缩放因子 (Attention Scale)",
+        "train_gradient_checkpointing": "梯度检查点 (Gradient Checkpointing)",
+        "train_cache_strategy": "缓存策略 (Cache Strategy)",
+        "train_max_cache_size": "最大缓存大小 (Max Cache Size)",
+        "train_strict_validation": "严格验证 (Strict Validation)",
+        "train_fallback_on_error": "错误回退 (Fallback on Error)",
 
         "inf_out_dir": "模型目录（ckpt.pt）",
         "inf_prompt": "提示词 (Prompt)",

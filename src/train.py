@@ -73,7 +73,17 @@ def train_model_generator(
     init_std=DEFAULT_CONFIG["training"]["init_std"],
     use_flash_attn=DEFAULT_CONFIG["training"]["use_flash_attn"],
     pos_encoding_type=DEFAULT_CONFIG["training"]["pos_encoding_type"],
-    rope_base=DEFAULT_CONFIG["training"]["rope_base"]
+    rope_base=DEFAULT_CONFIG["training"]["rope_base"],
+    # New optimized parameters with better defaults and validation
+    rope_cache_size=DEFAULT_CONFIG["training"]["rope_cache_size"],
+    alibi_bias_scale=DEFAULT_CONFIG["training"]["alibi_bias_scale"],
+    ffn_activation=DEFAULT_CONFIG["training"]["ffn_activation"],
+    attention_scale_factor=DEFAULT_CONFIG["training"]["attention_scale_factor"],
+    gradient_checkpointing=DEFAULT_CONFIG["training"]["gradient_checkpointing"],
+    cache_strategy=DEFAULT_CONFIG["training"]["cache_strategy"],
+    max_cache_size=DEFAULT_CONFIG["training"]["max_cache_size"],
+    strict_validation=DEFAULT_CONFIG["training"]["strict_validation"],
+    fallback_on_error=DEFAULT_CONFIG["training"]["fallback_on_error"]
 ):
     model_name = os.path.basename(os.path.abspath(out_dir)) or "new_model" # Ensure out_dir is absolute first
 
@@ -101,7 +111,13 @@ def train_model_generator(
         qkv_bias=qkv_bias, attn_dropout=attn_dropout, resid_dropout=resid_dropout,
         ln_eps=ln_eps, init_std=init_std, use_flash_attn=use_flash_attn,
         pos_encoding_type=pos_encoding_type,
-        rope_base=rope_base
+        rope_base=rope_base,
+        # New optimized parameters
+        rope_cache_size=rope_cache_size, alibi_bias_scale=alibi_bias_scale,
+        ffn_activation=ffn_activation, attention_scale_factor=attention_scale_factor,
+        gradient_checkpointing=gradient_checkpointing, cache_strategy=cache_strategy,
+        max_cache_size=max_cache_size, strict_validation=strict_validation,
+        fallback_on_error=fallback_on_error
     )
     dbm.save_training_config(model_id, _training_cfg_local_vars)
 
@@ -258,7 +274,11 @@ def train_model_generator(
             attn_dropout=attn_dropout, resid_dropout=resid_dropout,
             ln_eps=ln_eps, init_std=init_std, use_flash_attn=use_flash_attn,
             pos_encoding_type=pos_encoding_type,
-            rope_base=rope_base
+            rope_base=rope_base,
+            # New optimized parameters for enhanced performance and flexibility
+            rope_cache_size=rope_cache_size, alibi_bias_scale=alibi_bias_scale,
+            ffn_activation=ffn_activation, attention_scale_factor=attention_scale_factor,
+            gradient_checkpointing=gradient_checkpointing
         )
     else:
         model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size, bias=bias, vocab_size=vocab_size, dropout=dropout)

@@ -93,15 +93,51 @@ def generate_text(
         model_args = checkpoint['model_args']
         
         # Determine if this is a self-attention model based on model_args
-        is_self_attention_model = 'ffn_hidden_mult' in model_args or 'qkv_bias' in model_args
+        # Check for any self-attention specific parameters
+        is_self_attention_model = any(key in model_args for key in [
+            'ffn_hidden_mult', 'qkv_bias', 'attn_dropout', 'resid_dropout',
+            'ln_eps', 'init_std', 'use_flash_attn', 'pos_encoding_type',
+            'rope_base', 'rope_cache_size', 'alibi_bias_scale', 'ffn_activation'
+        ])
         
-        if is_self_attention_model:
-            gptconf = GPTSelfAttnConfig(**model_args)
-            model = GPTSelfAttn(gptconf)
-        else:
-            gptconf = GPTConfig(**model_args)
-            model = GPT(gptconf)
+        try:
+            if is_self_attention_model:
+                # Ensure all required parameters have defaults for backward compatibility
+                default_self_attn_args = {
+                    'ffn_hidden_mult': 4,
+                    'qkv_bias': True,
+                    'attn_dropout': 0.1,
+                    'resid_dropout': 0.1,
+                    'ln_eps': 1e-5,
+                    'init_std': 0.02,
+                    'use_flash_attn': False,
+                    'pos_encoding_type': 'rope',
+                    'rope_base': 10000,
+                    # New optimized parameters with sensible defaults
+                    'rope_cache_size': None,
+                    'alibi_bias_scale': 1.0,
+                    'ffn_activation': 'gelu',
+                    'attention_scale_factor': 1.0,
+                    'gradient_checkpointing': False
+                }
+                
+                # Merge with saved args, preferring saved values
+                for key, default_val in default_self_attn_args.items():
+                    if key not in model_args:
+                        model_args[key] = default_val
+                        print(f"Using default value for {key}: {default_val}")
+                
+                gptconf = GPTSelfAttnConfig(**model_args)
+                model = GPTSelfAttn(gptconf)
+            else:
+                gptconf = GPTConfig(**model_args)
+                model = GPT(gptconf)
             
+        except Exception as e:
+            err_msg = f"Failed to create model with args {model_args}: {str(e)}"
+            yield err_msg
+            return
+
         state_dict = checkpoint['model']
         unwanted_prefix = '_orig_mod.'
         for k, v in list(state_dict.items()):
