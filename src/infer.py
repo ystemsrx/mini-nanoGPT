@@ -90,6 +90,9 @@ def generate_text(
         checkpoint = torch.load(ckpt_path, map_location=device)
         model_args = checkpoint['model_args']
         
+        # Get the original training dtype for comparison
+        original_dtype = model_args.get('dtype', 'float32')  # Default to float32 if not found
+        
         # Determine if this is a self-attention model based on model_args
         # Check for any self-attention specific parameters
         is_self_attention_model = any(key in model_args for key in [
@@ -145,6 +148,21 @@ def generate_text(
 
         model.eval()
         model.to(device)
+        
+        # Handle dtype conversion if inference dtype differs from training dtype
+        if dtype != original_dtype:
+            print(f"Converting model from {original_dtype} to {dtype} for inference")
+            try:
+                ptdtype_target = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
+                model = model.to(dtype=ptdtype_target)
+                yield f"Model dtype converted from {original_dtype} to {dtype}\n"
+            except Exception as e:
+                warning_msg = f"Warning: Failed to convert model dtype from {original_dtype} to {dtype}: {str(e)}. Using original dtype.\n"
+                print(warning_msg)
+                yield warning_msg
+                # Continue with original dtype
+                dtype = original_dtype
+        
         if compile_model:
             try:
                 model = torch.compile(model)

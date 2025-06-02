@@ -720,6 +720,9 @@ def build_app_interface(selected_lang: str = "zh"):
                                                 step=0.1)
                     top_k_box = gr.Number(label=T["inf_top_k"],
                                           value=DEFAULT_CONFIG["inference"]["top_k"])
+                    dtype_box_inf = gr.Dropdown(label=T["inf_dtype"],
+                                               choices=["float16", "bfloat16", "float32"],
+                                               value=DEFAULT_CONFIG["inference"]["dtype"])
                     seed_box_inf = gr.Number(label=T["inf_seed"],
                                              value=DEFAULT_CONFIG["inference"]["seed"])
 
@@ -769,12 +772,15 @@ def build_app_interface(selected_lang: str = "zh"):
                                                            value=DEFAULT_CONFIG["inference"]["num_samples"])
                             comp_left_max_tokens = gr.Number(label=T["inf_max_new_tokens"], 
                                                            value=DEFAULT_CONFIG["inference"]["max_new_tokens"])
-                        with gr.Row():
                             comp_left_temperature = gr.Number(label=T["inf_temperature"], 
                                                             value=DEFAULT_CONFIG["inference"]["temperature"],
                                                             step=0.1)
+                        with gr.Row():
                             comp_left_top_k = gr.Number(label=T["inf_top_k"], 
                                                       value=DEFAULT_CONFIG["inference"]["top_k"])
+                            comp_left_dtype = gr.Dropdown(label=T["inf_dtype"],
+                                                        choices=["float16", "bfloat16", "float32"],
+                                                        value=DEFAULT_CONFIG["inference"]["dtype"])
                             comp_left_seed = gr.Number(label=T["inf_seed"], 
                                                      value=DEFAULT_CONFIG["inference"]["seed"])
                 
@@ -786,12 +792,15 @@ def build_app_interface(selected_lang: str = "zh"):
                                                              value=DEFAULT_CONFIG["inference"]["num_samples"])
                             comp_right_max_tokens = gr.Number(label=T["inf_max_new_tokens"], 
                                                              value=DEFAULT_CONFIG["inference"]["max_new_tokens"])
-                        with gr.Row():
                             comp_right_temperature = gr.Number(label=T["inf_temperature"], 
                                                              value=DEFAULT_CONFIG["inference"]["temperature"],
                                                              step=0.1)
+                        with gr.Row():
                             comp_right_top_k = gr.Number(label=T["inf_top_k"], 
                                                        value=DEFAULT_CONFIG["inference"]["top_k"])
+                            comp_right_dtype = gr.Dropdown(label=T["inf_dtype"],
+                                                         choices=["float16", "bfloat16", "float32"],
+                                                         value=DEFAULT_CONFIG["inference"]["dtype"])
                             comp_right_seed = gr.Number(label=T["inf_seed"], 
                                                     value=DEFAULT_CONFIG["inference"]["seed"])
 
@@ -1174,7 +1183,7 @@ def build_app_interface(selected_lang: str = "zh"):
         def inference_cb(
             data_dir_inf_, out_dir_inf_,
             prompt_, num_samples_, max_new_tokens_,
-            temperature_, top_k_, seed_inf_
+            temperature_, top_k_, dtype_inf_, seed_inf_
         ):
             try:
                 output_stream_text = ""
@@ -1194,7 +1203,7 @@ def build_app_interface(selected_lang: str = "zh"):
                     top_k=top_k_int,
                     seed=seed_inf_int,
                     device=DEFAULT_CONFIG["inference"]["device"], # These should ideally be UI configurable too
-                    dtype=DEFAULT_CONFIG["inference"]["dtype"],
+                    dtype=dtype_inf_,
                     compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
                 )
                 
@@ -1210,7 +1219,7 @@ def build_app_interface(selected_lang: str = "zh"):
             fn=inference_cb,
             inputs=[data_dir_inf, out_dir_inf, prompt_box,
                     num_samples_box, max_new_tokens_box,
-                    temperature_box, top_k_box, seed_box_inf],
+                    temperature_box, top_k_box, dtype_box_inf, seed_box_inf],
             outputs=inf_output
         )
 
@@ -1282,6 +1291,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 _d(d_inf["prompt"]),
                 _d(d_inf["num_samples"]), _d(d_inf["max_new_tokens"]),
                 _d(d_inf["temperature"]), _d(d_inf["top_k"]),
+                _d(d_inf["dtype"]), # dtype_box_inf
                 _d(d_inf["seed"]), # seed_box_inf
                 gr.update(), # inf_btn
                 ""                 # inf_output
@@ -1302,12 +1312,14 @@ def build_app_interface(selected_lang: str = "zh"):
                 _d(d_inf["max_new_tokens"]), # comp_left_max_tokens
                 _d(d_inf["temperature"]), # comp_left_temperature
                 _d(d_inf["top_k"]), # comp_left_top_k
+                _d(d_inf["dtype"]), # comp_left_dtype
                 _d(d_inf["seed"]), # comp_left_seed
                 # 右侧模型参数
                 _d(d_inf["num_samples"]), # comp_right_num_samples
                 _d(d_inf["max_new_tokens"]), # comp_right_max_tokens
                 _d(d_inf["temperature"]), # comp_right_temperature
                 _d(d_inf["top_k"]), # comp_right_top_k
+                _d(d_inf["dtype"]), # comp_right_dtype
                 _d(d_inf["seed"]), # comp_right_seed
                 _d(d_inf["prompt"]), # comp_prompt
                 gr.update(), # comp_generate_btn (不重置)
@@ -1464,6 +1476,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(value=_ic("max_new_tokens", d_inf_defaults["max_new_tokens"])),
                 gr.update(value=_ic("temperature", d_inf_defaults["temperature"])),
                 gr.update(value=_ic("top_k", d_inf_defaults["top_k"])),
+                gr.update(value=_ic("dtype", d_inf_defaults["dtype"])), # dtype_box_inf
                 gr.update(value=_ic("seed", d_inf_defaults["seed"])), # seed_box_inf
                 gr.update(), # inf_btn (添加缺失的组件)
                 inference_history # inf_output
@@ -1484,12 +1497,14 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(value=_ic("max_new_tokens", d_inf_defaults["max_new_tokens"])), # comp_left_max_tokens
                 gr.update(value=_ic("temperature", d_inf_defaults["temperature"])), # comp_left_temperature
                 gr.update(value=_ic("top_k", d_inf_defaults["top_k"])), # comp_left_top_k
+                gr.update(value=_ic("dtype", d_inf_defaults["dtype"])), # comp_left_dtype
                 gr.update(value=_ic("seed", d_inf_defaults["seed"])), # comp_left_seed
                 # 右侧模型参数
                 gr.update(value=_ic("num_samples", d_inf_defaults["num_samples"])), # comp_right_num_samples
                 gr.update(value=_ic("max_new_tokens", d_inf_defaults["max_new_tokens"])), # comp_right_max_tokens
                 gr.update(value=_ic("temperature", d_inf_defaults["temperature"])), # comp_right_temperature
                 gr.update(value=_ic("top_k", d_inf_defaults["top_k"])), # comp_right_top_k
+                gr.update(value=_ic("dtype", d_inf_defaults["dtype"])), # comp_right_dtype
                 gr.update(value=_ic("seed", d_inf_defaults["seed"])), # comp_right_seed
                 gr.update(value=_ic("prompt", d_inf_defaults["prompt"])), # comp_prompt
                 gr.update(), # comp_generate_btn
@@ -1530,7 +1545,7 @@ def build_app_interface(selected_lang: str = "zh"):
             train_plot, train_log,
             data_dir_inf, out_dir_inf,
             prompt_box, num_samples_box, max_new_tokens_box,
-            temperature_box, top_k_box, seed_box_inf,
+            temperature_box, top_k_box, dtype_box_inf, seed_box_inf,
             inf_btn, inf_output,
             # 添加对比页面组件
             comp_left_model, comp_right_model,
@@ -1538,9 +1553,9 @@ def build_app_interface(selected_lang: str = "zh"):
             comp_left_plot, comp_right_plot,
             comp_left_history, comp_right_history,
             comp_left_num_samples, comp_left_max_tokens,
-            comp_left_temperature, comp_left_top_k, comp_left_seed,
+            comp_left_temperature, comp_left_top_k, comp_left_dtype, comp_left_seed,
             comp_right_num_samples, comp_right_max_tokens, 
-            comp_right_temperature, comp_right_top_k, comp_right_seed,
+            comp_right_temperature, comp_right_top_k, comp_right_dtype, comp_right_seed,
             comp_prompt, comp_generate_btn,
             comp_left_output, comp_right_output,
             # ADD MISSING HIDDEN FIELDS
@@ -1623,7 +1638,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(label=Tn["dp_processed_dir"]), gr.update(label=Tn["inf_out_dir"]),
                 gr.update(label=Tn["inf_prompt"]), gr.update(label=Tn["inf_num_samples"]),
                 gr.update(label=Tn["inf_max_new_tokens"]), gr.update(label=Tn["inf_temperature"]),
-                gr.update(label=Tn["inf_top_k"]), gr.update(label=Tn["inf_seed"]), # seed_box_inf label
+                gr.update(label=Tn["inf_top_k"]), gr.update(label=Tn["inf_dtype"]), gr.update(label=Tn["inf_seed"]), # seed_box_inf label
                 gr.update(value=Tn["inf_start_btn"]), gr.update(label=Tn["inf_result"]),
                 # Comparison tab
                 gr.update(label=Tn["compare_left_model"]), gr.update(label=Tn["compare_right_model"]),
@@ -1632,10 +1647,10 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(label=Tn["compare_inference_history"]), gr.update(label=Tn["compare_inference_history"]),
                 # 左侧模型参数
                 gr.update(label=Tn["inf_num_samples"]), gr.update(label=Tn["inf_max_new_tokens"]), 
-                gr.update(label=Tn["inf_temperature"]), gr.update(label=Tn["inf_top_k"]), gr.update(label=Tn["inf_seed"]),
+                gr.update(label=Tn["inf_temperature"]), gr.update(label=Tn["inf_top_k"]), gr.update(label=Tn["inf_dtype"]), gr.update(label=Tn["inf_seed"]),
                 # 右侧模型参数
                 gr.update(label=Tn["inf_num_samples"]), gr.update(label=Tn["inf_max_new_tokens"]), 
-                gr.update(label=Tn["inf_temperature"]), gr.update(label=Tn["inf_top_k"]), gr.update(label=Tn["inf_seed"]),
+                gr.update(label=Tn["inf_temperature"]), gr.update(label=Tn["inf_top_k"]), gr.update(label=Tn["inf_dtype"]), gr.update(label=Tn["inf_seed"]),
                 gr.update(label=Tn["compare_shared_prompt"]), gr.update(value=Tn["compare_generate_btn"]),
                 gr.update(label=Tn["compare_left_output"]), gr.update(label=Tn["compare_right_output"]),
                 # Self-attention parameters
@@ -1682,7 +1697,7 @@ def build_app_interface(selected_lang: str = "zh"):
             train_log, train_plot,
             data_dir_inf, out_dir_inf, prompt_box,
             num_samples_box, max_new_tokens_box, temperature_box, top_k_box,
-            seed_box_inf,
+            dtype_box_inf, seed_box_inf,
             inf_btn, inf_output,
             # Comparison tab components
             comp_left_model, comp_right_model,
@@ -1690,9 +1705,9 @@ def build_app_interface(selected_lang: str = "zh"):
             comp_left_plot, comp_right_plot,
             comp_left_history, comp_right_history,
             comp_left_num_samples, comp_left_max_tokens, 
-            comp_left_temperature, comp_left_top_k, comp_left_seed,
+            comp_left_temperature, comp_left_top_k, comp_left_dtype, comp_left_seed,
             comp_right_num_samples, comp_right_max_tokens, 
-            comp_right_temperature, comp_right_top_k, comp_right_seed,
+            comp_right_temperature, comp_right_top_k, comp_right_dtype, comp_right_seed,
             comp_prompt, comp_generate_btn,
             comp_left_output, comp_right_output,
             # Self-attention parameters  
@@ -1834,8 +1849,8 @@ def build_app_interface(selected_lang: str = "zh"):
             left_data_dir, left_out_dir,
             right_data_dir, right_out_dir,
             prompt,
-            left_num_samples, left_max_tokens, left_temperature, left_top_k, left_seed,
-            right_num_samples, right_max_tokens, right_temperature, right_top_k, right_seed
+            left_num_samples, left_max_tokens, left_temperature, left_top_k, left_dtype, left_seed,
+            right_num_samples, right_max_tokens, right_temperature, right_top_k, right_dtype, right_seed
         ):
             """
             Run inference on both models simultaneously with different parameters
@@ -1892,7 +1907,7 @@ def build_app_interface(selected_lang: str = "zh"):
                             top_k=left_top_k_int,
                             seed=left_seed_int,
                             device=DEFAULT_CONFIG["inference"]["device"],
-                            dtype=DEFAULT_CONFIG["inference"]["dtype"],
+                            dtype=left_dtype,
                             compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
                         )
                         
@@ -1916,7 +1931,7 @@ def build_app_interface(selected_lang: str = "zh"):
                             top_k=right_top_k_int,
                             seed=right_seed_int,
                             device=DEFAULT_CONFIG["inference"]["device"],
-                            dtype=DEFAULT_CONFIG["inference"]["dtype"],
+                            dtype=right_dtype,
                             compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
                         )
                         
@@ -2000,8 +2015,8 @@ def build_app_interface(selected_lang: str = "zh"):
                 comp_left_data_dir, comp_left_out_dir,
                 comp_right_data_dir, comp_right_out_dir,
                 comp_prompt,
-                comp_left_num_samples, comp_left_max_tokens, comp_left_temperature, comp_left_top_k, comp_left_seed,
-                comp_right_num_samples, comp_right_max_tokens, comp_right_temperature, comp_right_top_k, comp_right_seed
+                comp_left_num_samples, comp_left_max_tokens, comp_left_temperature, comp_left_top_k, comp_left_dtype, comp_left_seed,
+                comp_right_num_samples, comp_right_max_tokens, comp_right_temperature, comp_right_top_k, comp_right_dtype, comp_right_seed
             ],
             outputs=[comp_left_output, comp_right_output]
         )
