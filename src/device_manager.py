@@ -236,6 +236,36 @@ class DeviceManager:
         """Get information for all devices"""
         return self._devices.copy()
     
+    def get_available_devices_list(self) -> List[str]:
+        """
+        Get list of available device names for UI selection
+        Returns devices sorted by preference (CUDA first, then CPU)
+        
+        Returns:
+            List of device names (e.g., ['cuda:0', 'cuda:1', 'cpu'])
+        """
+        available_devices = []
+        
+        # First add CUDA devices
+        cuda_devices = []
+        for device_name, device_info in self._devices.items():
+            if device_name.startswith('cuda:') and device_info.is_available:
+                cuda_devices.append(device_name)
+        
+        # Sort CUDA devices by device ID
+        cuda_devices.sort(key=lambda x: int(x.split(':')[1]))
+        available_devices.extend(cuda_devices)
+        
+        # Then add CPU if available
+        if 'cpu' in self._devices and self._devices['cpu'].is_available:
+            available_devices.append('cpu')
+        
+        # Ensure at least CPU is available as fallback
+        if not available_devices:
+            available_devices = ['cpu']
+            
+        return available_devices
+    
     def estimate_model_memory(self, model_size_mb: float) -> int:
         """
         Estimate memory required for model loading

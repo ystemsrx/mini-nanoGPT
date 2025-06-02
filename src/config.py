@@ -4,7 +4,7 @@ from multiprocessing import cpu_count
 
 import torch
 if torch.cuda.is_available():
-    selected_device = "cuda"
+    selected_device = "cuda:0"
     selected_backend = "nccl"
 else:
     selected_device = "cpu"
@@ -31,7 +31,7 @@ DEFAULT_CONFIG = {
         "init_from": "scratch",
         "gradient_accumulation_steps": 1,
         "batch_size": 32,
-        "block_size": 512,
+        "block_size": 256,
         "n_layer": 6,
         "n_head": 6,
         "n_embd": 384,
@@ -193,6 +193,7 @@ LANG_JSON = {
         "inf_start_btn": "Generate",
         "inf_result": "Generation Result",
         "inf_seed": "Seed",
+        "inf_device": "Inference Device",
         "stop_btn": "Stop Training",
 
         "model_new": "Create New Model",
@@ -320,6 +321,7 @@ LANG_JSON = {
         "inf_start_btn": "开始生成",
         "inf_result": "生成结果",
         "inf_seed": "种子 (Seed)",
+        "inf_device": "推理设备 (Inference Device)",
         "stop_btn": "停止训练",
 
         "model_new": "创建新模型",

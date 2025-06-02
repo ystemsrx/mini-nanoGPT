@@ -401,6 +401,40 @@ def build_app_interface(selected_lang: str = "zh"):
 
     T = LANG_JSON[selected_lang]
 
+    # Helper function to match device values
+    def _match_device_value(config_device: str, available_devices: list) -> str:
+        """
+        Match configuration device value with available devices
+        
+        Args:
+            config_device: Device from config (e.g., 'cuda', 'cpu')
+            available_devices: List of actual available devices (e.g., ['cuda:0', 'cpu'])
+            
+        Returns:
+            Matched device name from available_devices
+        """
+        if config_device in available_devices:
+            return config_device
+        
+        # If config has 'cuda' but available devices have 'cuda:0', etc.
+        if config_device == 'cuda':
+            for device in available_devices:
+                if device.startswith('cuda:'):
+                    return device
+        
+        # If config has 'cuda:X' but that specific device is not available, 
+        # fall back to first available CUDA device
+        if config_device.startswith('cuda:'):
+            for device in available_devices:
+                if device.startswith('cuda:'):
+                    return device
+        
+        # Default fallback to CPU if available, or first device in list
+        if 'cpu' in available_devices:
+            return 'cpu'
+        
+        return available_devices[0] if available_devices else 'cpu'
+
     # --- UI Helper functions ---
     def _get_model_choices_list():
         return [f"{m['id']} - {m['name']}" for m in dbm.get_all_models()]
@@ -491,8 +525,9 @@ def build_app_interface(selected_lang: str = "zh"):
                     data_dir_box = gr.Textbox(label=T["train_data_dir"], value="", interactive=False)
                     out_dir_box = gr.Textbox(label=T["train_out_dir"], value="", interactive=False)
                     backend_box = gr.Dropdown(label=T["train_backend"], choices=["nccl", "gloo"], value=DEFAULT_CONFIG["training"]["backend"])
-                    device_box = gr.Dropdown(label=T["train_device"], choices=["cpu", "cuda"],
-                                             value=DEFAULT_CONFIG["training"]["device"])
+                    available_devices = device_manager.get_available_devices_list()
+                    device_box = gr.Dropdown(label=T["train_device"], choices=available_devices,
+                                             value=_match_device_value(DEFAULT_CONFIG["training"]["device"], available_devices))
                     dtype_box = gr.Dropdown(label=T["train_dtype"], choices=["float16", "bfloat16", "float32"],
                                             value=DEFAULT_CONFIG["training"]["dtype"])
                     compile_box = gr.Checkbox(label=T["train_compile_model"],
@@ -726,6 +761,10 @@ def build_app_interface(selected_lang: str = "zh"):
                     dtype_box_inf = gr.Dropdown(label=T["inf_dtype"],
                                                choices=["float16", "bfloat16", "float32"],
                                                value=DEFAULT_CONFIG["inference"]["dtype"])
+                    available_devices_inf = device_manager.get_available_devices_list()
+                    device_box_inf = gr.Dropdown(label=T["inf_device"],
+                                                choices=available_devices_inf,
+                                                value=_match_device_value(DEFAULT_CONFIG["inference"]["device"], available_devices_inf))
                     seed_box_inf = gr.Number(label=T["inf_seed"],
                                              value=DEFAULT_CONFIG["inference"]["seed"])
 
@@ -1186,7 +1225,7 @@ def build_app_interface(selected_lang: str = "zh"):
         def inference_cb(
             data_dir_inf_, out_dir_inf_,
             prompt_, num_samples_, max_new_tokens_,
-            temperature_, top_k_, dtype_inf_, seed_inf_
+            temperature_, top_k_, dtype_inf_, device_inf_, seed_inf_
         ):
             try:
                 output_stream_text = ""
@@ -1206,7 +1245,7 @@ def build_app_interface(selected_lang: str = "zh"):
                     temperature=temperature_float,
                     top_k=top_k_int,
                     seed=seed_inf_int,
-                    device=DEFAULT_CONFIG["inference"]["device"], # These should ideally be UI configurable too
+                    device=device_inf_,  # 使用用户选择的设备
                     dtype=dtype_inf_,
                     compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
                 )
@@ -1236,7 +1275,7 @@ def build_app_interface(selected_lang: str = "zh"):
             fn=inference_cb,
             inputs=[data_dir_inf, out_dir_inf, prompt_box,
                     num_samples_box, max_new_tokens_box,
-                    temperature_box, top_k_box, dtype_box_inf, seed_box_inf],
+                    temperature_box, top_k_box, dtype_box_inf, device_box_inf, seed_box_inf],
             outputs=inf_output
         )
 
@@ -1309,6 +1348,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 _d(d_inf["num_samples"]), _d(d_inf["max_new_tokens"]),
                 _d(d_inf["temperature"]), _d(d_inf["top_k"]),
                 _d(d_inf["dtype"]), # dtype_box_inf
+                _d(d_inf["device"]), # device_box_inf
                 _d(d_inf["seed"]), # seed_box_inf
                 gr.update(), # inf_btn
                 ""                 # inf_output
@@ -1494,6 +1534,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(value=_ic("temperature", d_inf_defaults["temperature"])),
                 gr.update(value=_ic("top_k", d_inf_defaults["top_k"])),
                 gr.update(value=_ic("dtype", d_inf_defaults["dtype"])), # dtype_box_inf
+                gr.update(value=_ic("device", d_inf_defaults["device"])), # device_box_inf
                 gr.update(value=_ic("seed", d_inf_defaults["seed"])), # seed_box_inf
                 gr.update(), # inf_btn (添加缺失的组件)
                 inference_history # inf_output
@@ -1562,7 +1603,7 @@ def build_app_interface(selected_lang: str = "zh"):
             train_plot, train_log,
             data_dir_inf, out_dir_inf,
             prompt_box, num_samples_box, max_new_tokens_box,
-            temperature_box, top_k_box, dtype_box_inf, seed_box_inf,
+            temperature_box, top_k_box, dtype_box_inf, device_box_inf, seed_box_inf,
             inf_btn, inf_output,
             # 添加对比页面组件
             comp_left_model, comp_right_model,
@@ -1587,17 +1628,27 @@ def build_app_interface(selected_lang: str = "zh"):
         def delete_model_cb(sel: str):
             if sel and " - " in sel:
                 try:
-                    dbm.delete_model(int(sel.split(" - ")[0]))
+                    model_id = int(sel.split(" - ")[0])
+                    dbm.delete_model(model_id)
                 except Exception as e:
                     print(f"Error deleting model: {e}") # Log error
+            
             # 获取更新后的模型列表
             updated_choices = _get_model_choices_list()
+            
             # 更新主下拉框和对比页面的两个下拉框
             main_dropdown_update = gr.update(choices=updated_choices, value=None)
-            comp_left_update = gr.update(choices=updated_choices)
-            comp_right_update = gr.update(choices=updated_choices)
-            # 返回更新后的下拉框以及其他重置组件
-            return [main_dropdown_update, comp_left_update, comp_right_update] + _reset_updates()
+            comp_left_update = gr.update(choices=updated_choices, value=None)
+            comp_right_update = gr.update(choices=updated_choices, value=None)
+            
+            # 重置所有组件为默认值
+            reset_values = _reset_updates()
+            
+            # 额外清空对比页面特定的内容（在reset_updates基础上进一步确保清空）
+            # 找到对比页面组件在reset_values中的位置并确保它们被清空
+            # 由于_reset_updates已经处理了大部分重置，我们只需要确保对比页面的特殊组件被清空
+            
+            return [main_dropdown_update, comp_left_update, comp_right_update] + reset_values
 
 
         delete_model_btn.click(
@@ -1655,7 +1706,8 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(label=Tn["dp_processed_dir"]), gr.update(label=Tn["inf_out_dir"]),
                 gr.update(label=Tn["inf_prompt"]), gr.update(label=Tn["inf_num_samples"]),
                 gr.update(label=Tn["inf_max_new_tokens"]), gr.update(label=Tn["inf_temperature"]),
-                gr.update(label=Tn["inf_top_k"]), gr.update(label=Tn["inf_dtype"]), gr.update(label=Tn["inf_seed"]), # seed_box_inf label
+                gr.update(label=Tn["inf_top_k"]), gr.update(label=Tn["inf_dtype"]), 
+                gr.update(label=Tn["inf_device"]), gr.update(label=Tn["inf_seed"]), # seed_box_inf label
                 gr.update(value=Tn["inf_start_btn"]), gr.update(label=Tn["inf_result"]),
                 # Comparison tab
                 gr.update(label=Tn["compare_left_model"]), gr.update(label=Tn["compare_right_model"]),
@@ -1714,7 +1766,7 @@ def build_app_interface(selected_lang: str = "zh"):
             train_log, train_plot,
             data_dir_inf, out_dir_inf, prompt_box,
             num_samples_box, max_new_tokens_box, temperature_box, top_k_box,
-            dtype_box_inf, seed_box_inf,
+            dtype_box_inf, device_box_inf, seed_box_inf,
             inf_btn, inf_output,
             # Comparison tab components
             comp_left_model, comp_right_model,
@@ -1773,13 +1825,13 @@ def build_app_interface(selected_lang: str = "zh"):
             Select model for comparison (left or right side)
             """
             if not sel:
-                return [{}, generate_loss_chart_html([], []), "", "", ""] if is_left else [{}, generate_loss_chart_html([], []), "", ""]
+                return [{}, generate_loss_chart_html([], []), "", "", ""]
             
             try:
                 mid = int(sel.split(" - ")[0])
             except ValueError:
-                return [{}, generate_loss_chart_html([], []), "", "", ""] if is_left else [{}, generate_loss_chart_html([], []), "", ""]
-            
+                return [{}, generate_loss_chart_html([], []), "", "", ""]
+        
             # Get model info
             cfg = dbm.get_training_config(mid) or {}
             icfg = dbm.get_inference_config(mid) or {}
@@ -1843,10 +1895,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 except Exception as e:
                     print(f"Error formatting parameters: {e}")
             
-            if is_left:
-                return [display_params, loss_plot_html_content, inference_history, data_processed_dir, out_dir_root]
-            else:
-                return [display_params, loss_plot_html_content, inference_history, data_processed_dir, out_dir_root]
+            return [display_params, loss_plot_html_content, inference_history, data_processed_dir, out_dir_root]
         
         # Left model selection
         comp_left_model.change(
