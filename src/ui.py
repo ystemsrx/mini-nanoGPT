@@ -13,9 +13,12 @@ from src.db_manager import DBManager
 from src.data_process import process_data
 from src.train import train_model_generator, stop_training
 from src.infer import generate_text
+from src.infer_cache import cached_generate_text, ModelCache
+from src.device_manager import device_manager
 
-import threading
 import queue
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
 
 dbm = DBManager()
 
@@ -1194,7 +1197,8 @@ def build_app_interface(selected_lang: str = "zh"):
                 top_k_int = int(float(top_k_)) if top_k_ is not None and str(top_k_).strip() != "" else None
                 seed_inf_int = int(float(seed_inf_))
 
-                gen = generate_text(
+                # 使用缓存推理函数以获得更好的性能
+                gen = cached_generate_text(
                     data_dir=data_dir_inf_, out_dir=out_dir_inf_,
                     prompt=prompt_,
                     num_samples=num_samples_int,
@@ -1207,9 +1211,22 @@ def build_app_interface(selected_lang: str = "zh"):
                     compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
                 )
                 
+                # 批量处理输出以提高UI响应性
+                text_buffer = ""
+                buffer_threshold = 3  # 每3个字符批量输出
+                
                 for piece in gen:
-                    output_stream_text += piece
+                    text_buffer += piece
+                    if len(text_buffer) >= buffer_threshold:
+                        output_stream_text += text_buffer
+                        yield output_stream_text
+                        text_buffer = ""
+                
+                # 输出剩余内容
+                if text_buffer:
+                    output_stream_text += text_buffer
                     yield output_stream_text
+                    
             except Exception as e:
                 import traceback
                 print(f"Inference callback error: {traceback.format_exc()}")
@@ -1853,7 +1870,7 @@ def build_app_interface(selected_lang: str = "zh"):
             right_num_samples, right_max_tokens, right_temperature, right_top_k, right_dtype, right_seed
         ):
             """
-            Run inference on both models simultaneously with different parameters
+            Optimized dual model concurrent inference using caching system and improved concurrency strategy
             """
             if not left_out_dir or not right_out_dir:
                 return "Please select two models first.", "Please select two models first."
@@ -1861,152 +1878,199 @@ def build_app_interface(selected_lang: str = "zh"):
             if not prompt.strip():
                 return "Prompt is empty, please enter starting text.", "Prompt is empty, please enter starting text."
             
-            # Start with empty outputs
+            # Initialize output
             left_output = ""
             right_output = ""
             
             try:
-                # Convert left model parameters
+                # Parameter validation and conversion
                 try:
-                    left_num_samples_int = int(float(left_num_samples))
-                    left_max_tokens_int = int(float(left_max_tokens))
-                    left_temperature_float = float(left_temperature)
-                    left_top_k_int = int(float(left_top_k)) if left_top_k is not None and str(left_top_k).strip() != "" else None
-                    left_seed_int = int(float(left_seed))
+                    left_params = {
+                        'num_samples': int(float(left_num_samples)),
+                        'max_tokens': int(float(left_max_tokens)),
+                        'temperature': float(left_temperature),
+                        'top_k': int(float(left_top_k)) if left_top_k is not None and str(left_top_k).strip() != "" else None,
+                        'seed': int(float(left_seed)),
+                        'dtype': left_dtype
+                    }
                 except ValueError as e:
-                    left_output = f"Left model parameter error: {str(e)}"
-                    yield left_output, right_output
+                    yield f"Left model parameter error: {str(e)}", right_output
                     return
                     
-                # Convert right model parameters
                 try:
-                    right_num_samples_int = int(float(right_num_samples))
-                    right_max_tokens_int = int(float(right_max_tokens))
-                    right_temperature_float = float(right_temperature)
-                    right_top_k_int = int(float(right_top_k)) if right_top_k is not None and str(right_top_k).strip() != "" else None
-                    right_seed_int = int(float(right_seed))
+                    right_params = {
+                        'num_samples': int(float(right_num_samples)),
+                        'max_tokens': int(float(right_max_tokens)),
+                        'temperature': float(right_temperature),
+                        'top_k': int(float(right_top_k)) if right_top_k is not None and str(right_top_k).strip() != "" else None,
+                        'seed': int(float(right_seed)),
+                        'dtype': right_dtype
+                    }
                 except ValueError as e:
-                    right_output = f"Right model parameter error: {str(e)}"
-                    yield left_output, right_output
+                    yield left_output, f"Right model parameter error: {str(e)}"
                     return
                 
-                # Create queues for communication between threads
-                left_queue = queue.Queue()
-                right_queue = queue.Queue()
+                # Get cache instance to optimize model loading
+                cache = ModelCache()
+                cache_info = cache.get_cache_info()
+                print(f"Current cache status: {cache_info}")
                 
-                def run_left_inference():
-                    """Run left model inference in separate thread"""
-                    try:
-                        left_gen = generate_text(
-                            data_dir=left_data_dir,
-                            out_dir=left_out_dir,
-                            prompt=prompt,
-                            num_samples=left_num_samples_int,
-                            max_new_tokens=left_max_tokens_int,
-                            temperature=left_temperature_float,
-                            top_k=left_top_k_int,
-                            seed=left_seed_int,
-                            device=DEFAULT_CONFIG["inference"]["device"],
-                            dtype=left_dtype,
-                            compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
-                        )
-                        
-                        for piece in left_gen:
-                            left_queue.put(('data', piece))
-                        left_queue.put(('done', None))
-                    except Exception as e:
-                        left_queue.put(('error', f"Left model generation error: {str(e)}"))
-                        left_queue.put(('done', None))
+                # Smart device allocation - estimate memory requirements and assign optimal devices
+                left_ckpt_path = left_out_dir if left_out_dir.endswith('.pt') else os.path.join(left_out_dir, 'ckpt.pt')
+                right_ckpt_path = right_out_dir if right_out_dir.endswith('.pt') else os.path.join(right_out_dir, 'ckpt.pt')
                 
-                def run_right_inference():
-                    """Run right model inference in separate thread"""
-                    try:
-                        right_gen = generate_text(
-                            data_dir=right_data_dir,
-                            out_dir=right_out_dir,
-                            prompt=prompt,
-                            num_samples=right_num_samples_int,
-                            max_new_tokens=right_max_tokens_int,
-                            temperature=right_temperature_float,
-                            top_k=right_top_k_int,
-                            seed=right_seed_int,
-                            device=DEFAULT_CONFIG["inference"]["device"],
-                            dtype=right_dtype,
-                            compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
-                        )
-                        
-                        for piece in right_gen:
-                            right_queue.put(('data', piece))
-                        right_queue.put(('done', None))
-                    except Exception as e:
-                        right_queue.put(('error', f"Right model generation error: {str(e)}"))
-                        right_queue.put(('done', None))
+                left_memory_req = 0
+                right_memory_req = 0
                 
-                # Start both inference threads
-                left_thread = threading.Thread(target=run_left_inference)
-                right_thread = threading.Thread(target=run_right_inference)
+                if os.path.exists(left_ckpt_path):
+                    left_size_mb = os.path.getsize(left_ckpt_path) / (1024 * 1024)
+                    left_memory_req = device_manager.estimate_model_memory(left_size_mb)
                 
-                left_thread.start()
-                right_thread.start()
+                if os.path.exists(right_ckpt_path):
+                    right_size_mb = os.path.getsize(right_ckpt_path) / (1024 * 1024)
+                    right_memory_req = device_manager.estimate_model_memory(right_size_mb)
                 
-                # Track completion status
-                left_done = False
-                right_done = False
+                # Allocate optimal device combination for dual models
+                left_device, right_device = device_manager.allocate_devices_for_comparison(
+                    left_memory_req, right_memory_req
+                )
                 
-                # Process outputs from both models simultaneously
-                while not (left_done and right_done):
-                    # Check for updates from both queues
-                    updated = False
+                print(f"Device allocation: left model={left_device}, right model={right_device}")
+                
+                # Use improved queues and more efficient thread pool
+                left_queue = queue.Queue(maxsize=1000)  # Increase queue capacity
+                right_queue = queue.Queue(maxsize=1000)
+                
+                # Use thread pool executor for better performance
+                with ThreadPoolExecutor(max_workers=2, thread_name_prefix="ModelInference") as executor:
                     
-                    # Process left model output
-                    if not left_done:
+                    def run_cached_inference(data_dir, out_dir, params, result_queue, model_name, assigned_device):
+                        """Wrapper function for running cached inference with smart device allocation"""
                         try:
-                            msg_type, data = left_queue.get_nowait()
-                            if msg_type == 'data':
-                                left_output += data
-                                updated = True
-                            elif msg_type == 'error':
-                                left_output = data
-                                updated = True
-                            elif msg_type == 'done':
-                                left_done = True
-                        except queue.Empty:
-                            pass
+                            gen = cached_generate_text(
+                                data_dir=data_dir,
+                                out_dir=out_dir,
+                                prompt=prompt,
+                                num_samples=params['num_samples'],
+                                max_new_tokens=params['max_tokens'],
+                                temperature=params['temperature'],
+                                top_k=params['top_k'],
+                                seed=params['seed'],
+                                device=assigned_device,  # Use intelligently allocated device
+                                dtype=params['dtype'],
+                                compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
+                            )
+                            
+                            # Batch process generated text fragments to reduce queue operations
+                            text_buffer = ""
+                            buffer_size = 5  # Batch output every 5 characters
+                            
+                            for piece in gen:
+                                text_buffer += piece
+                                if len(text_buffer) >= buffer_size:
+                                    result_queue.put(('data', text_buffer))
+                                    text_buffer = ""
+                            
+                            # Output remaining content
+                            if text_buffer:
+                                result_queue.put(('data', text_buffer))
+                            
+                            result_queue.put(('done', None))
+                            
+                        except Exception as e:
+                            error_msg = f"{model_name} generation error: {str(e)}"
+                            result_queue.put(('error', error_msg))
+                            result_queue.put(('done', None))
                     
-                    # Process right model output
-                    if not right_done:
-                        try:
-                            msg_type, data = right_queue.get_nowait()
-                            if msg_type == 'data':
-                                right_output += data
-                                updated = True
-                            elif msg_type == 'error':
-                                right_output = data
-                                updated = True
-                            elif msg_type == 'done':
-                                right_done = True
-                        except queue.Empty:
-                            pass
+                    # Submit two inference tasks using intelligently allocated devices
+                    left_future = executor.submit(
+                        run_cached_inference, 
+                        left_data_dir, left_out_dir, left_params, left_queue, "Left model", left_device
+                    )
+                    right_future = executor.submit(
+                        run_cached_inference, 
+                        right_data_dir, right_out_dir, right_params, right_queue, "Right model", right_device
+                    )
                     
-                    # Yield updated outputs if there were changes
-                    if updated:
-                        yield left_output, right_output
+                    # Track completion status
+                    left_done = False
+                    right_done = False
+                    last_yield_time = 0
+                    min_yield_interval = 0.05  # Minimum output interval to reduce UI update frequency
                     
-                    # Small delay to prevent busy waiting
-                    import time
-                    time.sleep(0.1)
-                
-                # Wait for threads to complete
-                left_thread.join(timeout=5)
-                right_thread.join(timeout=5)
-                
-                # Final yield with complete outputs
-                yield left_output, right_output
+                    # Improved concurrent output processing
+                    while not (left_done and right_done):
+                        current_time = time.time() if 'time' in globals() else __import__('time').time()
+                        updated = False
+                        batch_update = False
+                        
+                        # Batch process left model output
+                        left_batch = []
+                        while not left_done:
+                            try:
+                                msg_type, data = left_queue.get_nowait()
+                                if msg_type == 'data':
+                                    left_batch.append(data)
+                                elif msg_type == 'error':
+                                    left_output = data
+                                    updated = True
+                                    break
+                                elif msg_type == 'done':
+                                    left_done = True
+                                    break
+                            except queue.Empty:
+                                break
+                        
+                        if left_batch:
+                            left_output += ''.join(left_batch)
+                            updated = True
+                        
+                        # Batch process right model output
+                        right_batch = []
+                        while not right_done:
+                            try:
+                                msg_type, data = right_queue.get_nowait()
+                                if msg_type == 'data':
+                                    right_batch.append(data)
+                                elif msg_type == 'error':
+                                    right_output = data
+                                    updated = True
+                                    break
+                                elif msg_type == 'done':
+                                    right_done = True
+                                    break
+                            except queue.Empty:
+                                break
+                        
+                        if right_batch:
+                            right_output += ''.join(right_batch)
+                            updated = True
+                        
+                        # Control output frequency to reduce UI pressure
+                        if updated and (current_time - last_yield_time) >= min_yield_interval:
+                            yield left_output, right_output
+                            last_yield_time = current_time
+                        elif not updated:
+                            # Wait a bit when no updates to avoid high CPU usage
+                            import time
+                            time.sleep(0.02)  # Reduce wait time
+                    
+                    # Wait for tasks to complete
+                    concurrent.futures.wait([left_future, right_future], timeout=10)
+                    
+                    # Final output
+                    yield left_output, right_output
+                    
+                    # Log performance information
+                    final_cache_info = cache.get_cache_info()
+                    print(f"Inference completed, cache status: {final_cache_info}")
                 
             except Exception as e:
                 import traceback
-                print(f"Dual inference error: {traceback.format_exc()}")
-                yield f"Error: {str(e)}", f"Error: {str(e)}"
+                error_trace = traceback.format_exc()
+                print(f"Dual model inference error: {error_trace}")
+                error_msg = f"Error occurred during inference: {str(e)}"
+                yield error_msg, error_msg
         
         # Connect the generate button to the dual inference callback
         comp_generate_btn.click(
