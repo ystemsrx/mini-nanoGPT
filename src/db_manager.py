@@ -13,14 +13,27 @@ class DBManager:
       - Renames model-related directories (./data and ./out) synchronously with database updates.
       - Deletes model-related directories synchronously with database updates.
       - Retrieves basic model information like name and directory path.
+      - Uses relative paths for better project portability.
     """
     # Initialization and table creation
     def __init__(self, db_path: str = "assets/model_registry.db"):
         """
         Initializes the database connection and ensures all necessary tables exist.
+        Uses relative paths for better project portability.
         """
-        rel_db_path = os.path.relpath(db_path, PROJECT_ROOT)
-        self.conn = sqlite3.connect(rel_db_path, check_same_thread=False)
+        # 使用相对路径，更友好的项目移植性
+        if os.path.isabs(db_path):
+            # 如果传入绝对路径，转换为相对路径
+            db_abs_path = db_path
+        else:
+            # 相对于当前工作目录
+            db_abs_path = os.path.join(os.getcwd(), db_path)
+        
+        db_dir = os.path.dirname(db_abs_path)
+        if not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+        
+        self.conn = sqlite3.connect(db_abs_path, check_same_thread=False)
         self.conn.execute("PRAGMA foreign_keys = ON") # Ensure foreign key constraints are enforced
         self.conn.row_factory = sqlite3.Row # Access columns by name
         self._create_tables()
@@ -68,15 +81,34 @@ class DBManager:
     # Internal path utilities
     def _rel(self, path: str) -> str:
         """
-        Converts an absolute path to a path relative to the project root.
+        Converts an absolute path to a path relative to the current working directory.
+        Enhanced for better portability.
         """
-        return os.path.relpath(path, PROJECT_ROOT)
+        if os.path.isabs(path):
+            # 尝试获取相对于当前工作目录的相对路径
+            try:
+                return os.path.relpath(path, os.getcwd())
+            except ValueError:
+                # 如果在不同驱动器上（Windows），返回原路径
+                return path
+        else:
+            # 已经是相对路径，直接返回
+            return path
 
     def _abs(self, rel_path: str) -> str:
         """
-        Converts a path relative to the project root to an absolute path.
+        Converts a path relative to the current working directory to an absolute path.
+        Enhanced for better portability.
         """
-        return os.path.join(PROJECT_ROOT, rel_path) if rel_path else ""
+        if not rel_path:
+            return ""
+        
+        if os.path.isabs(rel_path):
+            # 已经是绝对路径，直接返回
+            return rel_path
+        else:
+            # 相对路径，转换为绝对路径
+            return os.path.abspath(os.path.join(os.getcwd(), rel_path))
 
     # Model registration and basic info
     def register_model(self, name: str, dir_path: Optional[str] = None) -> int:

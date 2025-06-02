@@ -4,6 +4,7 @@ import pickle
 import numpy as np
 import torch
 import torch._dynamo
+import time
 torch._dynamo.config.suppress_errors = True
 
 import gradio as gr
@@ -1227,8 +1228,11 @@ def build_app_interface(selected_lang: str = "zh"):
             prompt_, num_samples_, max_new_tokens_,
             temperature_, top_k_, dtype_inf_, device_inf_, seed_inf_
         ):
+            cache = None
             try:
                 output_stream_text = ""
+                print("🚀 Single model inference started")
+                
                 # Ensure numeric conversions are robust
                 num_samples_int = int(float(num_samples_))
                 max_new_tokens_int = int(float(max_new_tokens_))
@@ -1236,7 +1240,10 @@ def build_app_interface(selected_lang: str = "zh"):
                 top_k_int = int(float(top_k_)) if top_k_ is not None and str(top_k_).strip() != "" else None
                 seed_inf_int = int(float(seed_inf_))
 
-                # 使用缓存推理函数以获得更好的性能
+                # 获取缓存实例以便后续清理
+                cache = ModelCache()
+                
+                # 使用缓存推理函数以获得更好的性能，禁用自动缓存清理以便统一管理
                 gen = cached_generate_text(
                     data_dir=data_dir_inf_, out_dir=out_dir_inf_,
                     prompt=prompt_,
@@ -1247,7 +1254,8 @@ def build_app_interface(selected_lang: str = "zh"):
                     seed=seed_inf_int,
                     device=device_inf_,  # 使用用户选择的设备
                     dtype=dtype_inf_,
-                    compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
+                    compile_model=DEFAULT_CONFIG["inference"]["compile_model"],
+                    auto_clear_cache=False  # 禁用自动清理，改为统一管理
                 )
                 
                 # 批量处理输出以提高UI响应性
@@ -1265,11 +1273,25 @@ def build_app_interface(selected_lang: str = "zh"):
                 if text_buffer:
                     output_stream_text += text_buffer
                     yield output_stream_text
+                
+                print("✅ Single model inference completed successfully")
                     
             except Exception as e:
                 import traceback
-                print(f"Inference callback error: {traceback.format_exc()}")
-                yield f"Error during inference: {str(e)}"
+                error_msg = f"Error during inference: {str(e)}"
+                print(f"❌ Single inference error: {error_msg}")
+                print(traceback.format_exc())
+                yield error_msg
+                
+            finally:
+                # 统一清理缓存 - 确保单独推理后释放资源
+                try:
+                    if cache is None:
+                        cache = ModelCache()
+                    cache.clear_cache()
+                    print("🧹 Single inference completed, cache cleared for optimal performance")
+                except Exception as cleanup_error:
+                    print(f"Warning: Cache cleanup failed: {cleanup_error}")
 
         inf_btn.click(
             fn=inference_cb,
@@ -1404,14 +1426,15 @@ def build_app_interface(selected_lang: str = "zh"):
             info = dbm.get_model_basic_info(mid) or {}
             name = info.get("name", "unknown_model") # Default name
 
-            # Use the actual directory path from database instead of reconstructing
+            # 使用相对路径处理，提高项目移植性
             if "dir_path" in info:
+                # 数据库中存储的是相对路径，可以直接使用
                 out_dir_root = info["dir_path"]
-                # Extract folder name from the stored path for data directory
+                # 从存储的路径中提取文件夹名用于数据目录
                 folder = os.path.basename(out_dir_root)
                 data_processed_dir = os.path.join("data", folder, "processed")
             else:
-                # Fallback to old behavior if dir_path not available (shouldn't happen)
+                # 兼容性处理：如果没有dir_path，使用传统方式
                 folder_name_part = "".join(c if c.isalnum() or c in ['_','-'] else '_' for c in name)
                 folder = f"{folder_name_part}_{mid}"
                 data_processed_dir = os.path.join("data", folder, "processed")
@@ -1838,14 +1861,15 @@ def build_app_interface(selected_lang: str = "zh"):
             info = dbm.get_model_basic_info(mid) or {}
             name = info.get("name", "unknown_model")
             
-            # Use the actual directory path from database instead of reconstructing
+            # 使用相对路径处理，提高项目移植性
             if "dir_path" in info:
+                # 数据库中存储的是相对路径，可以直接使用
                 out_dir_root = info["dir_path"]
-                # Extract folder name from the stored path for data directory
+                # 从存储的路径中提取文件夹名用于数据目录
                 folder = os.path.basename(out_dir_root)
                 data_processed_dir = os.path.join("data", folder, "processed")
             else:
-                # Fallback to old behavior if dir_path not available (shouldn't happen)
+                # 兼容性处理：如果没有dir_path，使用传统方式
                 folder_name_part = "".join(c if c.isalnum() or c in ['_','-'] else '_' for c in name)
                 folder = f"{folder_name_part}_{mid}"
                 data_processed_dir = os.path.join("data", folder, "processed")
@@ -1930,6 +1954,7 @@ def build_app_interface(selected_lang: str = "zh"):
             # Initialize output
             left_output = ""
             right_output = ""
+            cache = None
             
             try:
                 # Parameter validation and conversion
@@ -1962,7 +1987,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 # Get cache instance to optimize model loading
                 cache = ModelCache()
                 cache_info = cache.get_cache_info()
-                print(f"Current cache status: {cache_info}")
+                print(f"🔍 Comparison inference started - Cache status: {cache_info}")
                 
                 # Smart device allocation - estimate memory requirements and assign optimal devices
                 left_ckpt_path = left_out_dir if left_out_dir.endswith('.pt') else os.path.join(left_out_dir, 'ckpt.pt')
@@ -1984,7 +2009,7 @@ def build_app_interface(selected_lang: str = "zh"):
                     left_memory_req, right_memory_req
                 )
                 
-                print(f"Device allocation: left model={left_device}, right model={right_device}")
+                print(f"🎯 Device allocation: left model={left_device}, right model={right_device}")
                 
                 # Use improved queues and more efficient thread pool
                 left_queue = queue.Queue(maxsize=1000)  # Increase queue capacity
@@ -2007,7 +2032,8 @@ def build_app_interface(selected_lang: str = "zh"):
                                 seed=params['seed'],
                                 device=assigned_device,  # Use intelligently allocated device
                                 dtype=params['dtype'],
-                                compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
+                                compile_model=DEFAULT_CONFIG["inference"]["compile_model"],
+                                auto_clear_cache=False  # 在对比推理中禁用自动清理，改为统一清理
                             )
                             
                             # Batch process generated text fragments to reduce queue operations
@@ -2049,7 +2075,7 @@ def build_app_interface(selected_lang: str = "zh"):
                     
                     # Improved concurrent output processing
                     while not (left_done and right_done):
-                        current_time = time.time() if 'time' in globals() else __import__('time').time()
+                        current_time = time.time()
                         updated = False
                         batch_update = False
                         
@@ -2101,25 +2127,45 @@ def build_app_interface(selected_lang: str = "zh"):
                             last_yield_time = current_time
                         elif not updated:
                             # Wait a bit when no updates to avoid high CPU usage
-                            import time
                             time.sleep(0.02)  # Reduce wait time
                     
                     # Wait for tasks to complete
-                    concurrent.futures.wait([left_future, right_future], timeout=10)
+                    try:
+                        left_future.result(timeout=1.0)
+                        right_future.result(timeout=1.0)
+                    except concurrent.futures.TimeoutError:
+                        print("Warning: Some inference tasks may not have completed properly")
+                    except Exception as e:
+                        print(f"Warning: Task completion error: {e}")
                     
                     # Final output
                     yield left_output, right_output
                     
-                    # Log performance information
-                    final_cache_info = cache.get_cache_info()
-                    print(f"Inference completed, cache status: {final_cache_info}")
-                
+                    print("🏁 Comparison inference completed successfully")
+                    
             except Exception as e:
+                error_msg = f"Comparison inference error: {str(e)}"
+                print(f"❌ {error_msg}")
                 import traceback
-                error_trace = traceback.format_exc()
-                print(f"Dual model inference error: {error_trace}")
-                error_msg = f"Error occurred during inference: {str(e)}"
-                yield error_msg, error_msg
+                print(traceback.format_exc())
+                
+                # If either output is empty, put error message
+                if not left_output.strip():
+                    left_output = error_msg
+                if not right_output.strip():
+                    right_output = error_msg
+                    
+                yield left_output, right_output
+                
+            finally:
+                # 统一清理缓存 - 确保对比推理后释放资源
+                try:
+                    if cache is None:
+                        cache = ModelCache()
+                    cache.clear_cache()
+                    print("🧹 Comparison inference completed, cache cleared for optimal performance")
+                except Exception as cleanup_error:
+                    print(f"Warning: Cache cleanup failed: {cleanup_error}")
         
         # Connect the generate button to the dual inference callback
         comp_generate_btn.click(

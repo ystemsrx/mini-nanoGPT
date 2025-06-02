@@ -84,7 +84,7 @@ def analyze_sqlite_db(db_path):
 
 if __name__ == "__main__":
     # Set database file path
-    db_file = "../model_registry.db"
+    db_file = "assets/model_registry.db"
     
     # Analyze database
     analyze_sqlite_db(db_file)

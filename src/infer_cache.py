@@ -13,6 +13,7 @@ from src.config import DEFAULT_CONFIG
 from src.gpt_model import GPTConfig, GPT
 from src.gpt_self_attn import GPTSelfAttnConfig, GPTSelfAttn
 from src.device_manager import device_manager
+from src.db_manager import DBManager
 
 
 class ModelCache:
@@ -57,8 +58,31 @@ class ModelCache:
         cache_key = self._get_cache_key(ckpt_path, device, dtype)
         
         with self._lock:
+            # Check if checkpoint file has been modified since last cache
+            should_reload = False
+            if os.path.exists(ckpt_path):
+                current_mtime = os.path.getmtime(ckpt_path)
+                
+                # Check if we have cached modification time
+                mtime_key = f"{cache_key}_mtime"
+                if mtime_key in self._cache:
+                    cached_mtime = self._cache[mtime_key]
+                    if current_mtime > cached_mtime:
+                        print(f"Checkpoint file modified, clearing cache for: {ckpt_path}")
+                        should_reload = True
+                        # Remove old cache entries for this checkpoint
+                        keys_to_remove = [k for k in self._cache.keys() if k.startswith(ckpt_path)]
+                        for k in keys_to_remove:
+                            del self._cache[k]
+                else:
+                    # First time caching this file
+                    should_reload = True
+                
+                # Store current modification time
+                self._cache[mtime_key] = current_mtime
+            
             # Check model cache
-            if cache_key in self._cache:
+            if cache_key in self._cache and not should_reload:
                 cached_data = self._cache[cache_key]
                 model = cached_data['model']
                 gptconf = cached_data['gptconf']
@@ -178,69 +202,87 @@ class ModelCache:
             else:
                 encode, decode = self._meta_cache[meta_key]
             
-            print(f"Model loaded and cached: {cache_key}")
             return model, gptconf, encode, decode
-    
+
     def _load_meta_and_tokenizer(self, data_dir: str) -> Tuple[Any, Any]:
         """Load metadata and tokenizer"""
         meta_path = os.path.join(data_dir, 'meta.pkl')
-        if not os.path.exists(meta_path):
-            raise FileNotFoundError(f"meta.pkl not found at {meta_path}")
-        
-        with open(meta_path, 'rb') as f:
-            meta = pickle.load(f)
-        
-        tokenizer_type = meta.get('tokenizer', 'character level')
-        stoi, itos = meta['stoi'], meta['itos']
+        stoi, itos = {}, {}
         
         def safe_decode(decode_func, tokens, fallback_char=""):
             try:
                 return decode_func(tokens)
-            except Exception:
-                return fallback_char
+            except:
+                # Try token by token
+                result = ""
+                for token in tokens:
+                    try:
+                        result += decode_func([token])
+                    except:
+                        result += fallback_char
+                return result
         
-        if 'old2new' in meta:
-            old2new = meta['old2new']
-            new2old = {new: old for old, new in old2new.items()}
-            
-            if tokenizer_type == 'custom_json':
-                try:
-                    from tokenizers import Tokenizer
-                    tokenizer_path = os.path.join(Path.cwd(), "assets/tokenizer.json")
-                    if os.path.exists(tokenizer_path):
-                        tokenizer = Tokenizer.from_file(tokenizer_path)
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, 'rb') as f:
+                    meta = pickle.load(f)
+                    stoi = meta.get('stoi', {})
+                    itos = meta.get('itos', {})
+                    
+                    # Handle different token mapping formats
+                    if 'old2new' in meta and 'new2old' in meta:
+                        old2new = meta['old2new']
+                        new2old = meta['new2old']
+                        tokenizer_type = meta.get('tokenizer_type', 'char_level')
                         
-                        def encode(s):
-                            ids = tokenizer.encode(s).ids
-                            return [old2new.get(id, old2new.get(0, 0)) for id in ids]
+                        if tokenizer_type == 'custom_json':
+                            try:
+                                from tokenizers import Tokenizer
+                                tokenizer_path = os.path.join(Path.cwd(), "assets/tokenizer.json")
+                                if os.path.exists(tokenizer_path):
+                                    tokenizer = Tokenizer.from_file(tokenizer_path)
+                                    
+                                    def encode(s):
+                                        ids = tokenizer.encode(s).ids
+                                        return [old2new.get(id, old2new.get(0, 0)) for id in ids]
+                                    
+                                    def decode(l):
+                                        original_ids = [new2old.get(id, new2old.get(0, 0)) for id in l]
+                                        return safe_decode(tokenizer.decode, original_ids)
+                                else:
+                                    def encode(s):
+                                        return [stoi.get(ch, 0) for ch in s]
+                                    def decode(l):
+                                        return ''.join([itos.get(i, '') for i in l])
+                            except ImportError:
+                                def encode(s):
+                                    return [stoi.get(ch, 0) for ch in s]
+                                def decode(l):
+                                    return ''.join([itos.get(i, '') for i in l])
                         
-                        def decode(l):
-                            original_ids = [new2old.get(id, new2old.get(0, 0)) for id in l]
-                            return safe_decode(tokenizer.decode, original_ids)
+                        elif tokenizer_type == 'gpt2':
+                            import tiktoken
+                            enc = tiktoken.get_encoding("gpt2")
+                            
+                            def encode(s):
+                                ids = enc.encode(s, allowed_special={"<|endoftext|>"})
+                                return [old2new.get(id, old2new.get(0, 0)) for id in ids]
+                            
+                            def decode(l):
+                                original_ids = [new2old.get(id, new2old.get(0, 0)) for id in l]
+                                return safe_decode(enc.decode, original_ids)
+                        
+                        else:
+                            def encode(s):
+                                return [stoi.get(ch, 0) for ch in s]
+                            def decode(l):
+                                return ''.join([itos.get(i, '') for i in l])
                     else:
                         def encode(s):
                             return [stoi.get(ch, 0) for ch in s]
                         def decode(l):
                             return ''.join([itos.get(i, '') for i in l])
-                except ImportError:
-                    def encode(s):
-                        return [stoi.get(ch, 0) for ch in s]
-                    def decode(l):
-                        return ''.join([itos.get(i, '') for i in l])
-            
-            elif tokenizer_type == 'gpt2':
-                import tiktoken
-                enc = tiktoken.get_encoding("gpt2")
-                
-                def encode(s):
-                    ids = enc.encode(s, allowed_special={"<|endoftext|>"})
-                    return [old2new.get(id, old2new.get(0, 0)) for id in ids]
-                
-                def decode(l):
-                    original_ids = [new2old.get(id, new2old.get(0, 0)) for id in l]
-                    return safe_decode(enc.decode, original_ids)
-            
-            else:
+            except:
                 def encode(s):
                     return [stoi.get(ch, 0) for ch in s]
                 def decode(l):
@@ -254,10 +296,35 @@ class ModelCache:
         return encode, decode
     
     def clear_cache(self):
-        """Clear cache"""
+        """强制彻底清除所有缓存"""
         with self._lock:
+            print("🧹 Starting complete cache cleanup...")
+            
+            # 清理所有模型缓存前先移动到GPU外
+            for cache_key, cached_data in list(self._cache.items()):
+                if isinstance(cached_data, dict) and 'model' in cached_data:
+                    try:
+                        model = cached_data['model']
+                        if hasattr(model, 'cpu'):
+                            model.cpu()
+                        del model
+                    except Exception as e:
+                        print(f"Warning during model cleanup: {e}")
+            
+            # 清空所有缓存字典
             self._cache.clear()
             self._meta_cache.clear()
+            
+            # 强制垃圾回收
+            import gc
+            gc.collect()
+            
+            # 清理CUDA缓存
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            
+            print("✅ Cache completely cleared!")
     
     def get_cache_info(self) -> Dict[str, int]:
         """Get cache information"""
@@ -279,7 +346,8 @@ def cached_generate_text(
     seed=DEFAULT_CONFIG["inference"]["seed"],
     device=DEFAULT_CONFIG["inference"]["device"],
     dtype=DEFAULT_CONFIG["inference"]["dtype"],
-    compile_model=DEFAULT_CONFIG["inference"]["compile_model"]
+    compile_model=DEFAULT_CONFIG["inference"]["compile_model"],
+    auto_clear_cache=True  # 新增参数控制是否自动清理缓存
 ):
     """
     Efficient text generation function using cache
@@ -288,7 +356,17 @@ def cached_generate_text(
         yield "Prompt is empty, please provide a starting text."
         return
     
+    cache = None
     try:
+        # Database integration - get model_id for saving inference history
+        dbm = DBManager()
+        ckpt_dir = out_dir if out_dir.endswith('.pt') else os.path.join(out_dir, 'ckpt.pt')
+        model_dir_for_db = os.path.dirname(ckpt_dir)
+        model_name_for_db = os.path.basename(model_dir_for_db) or "new_model"
+        model_id = dbm.get_model_id_by_dir(model_dir_for_db)
+        if model_id is None:
+            model_id = dbm.register_model(model_name_for_db, model_dir_for_db)
+
         # Set random seed
         torch.manual_seed(seed)
         if 'cuda' in device:
@@ -374,6 +452,28 @@ def cached_generate_text(
                     if s_i < num_samples - 1:
                         separator = "\n" + "-" * 30 + "\n"
                         yield separator
+
+        # Save inference history to database
+        final_text = "\n\n".join(accumulated_output)
+        dbm.save_inference_history(model_id, final_text)
+        
+        # 根据参数决定是否自动清理缓存
+        if auto_clear_cache and cache:
+            cache.clear_cache()
+            print("✅ Inference completed, cache auto-cleared")
+        else:
+            print("ℹ️ Inference completed, cache retained for reuse")
     
     except Exception as ex:
         yield f"An unexpected error occurred: {str(ex)}"
+        # 发生错误时根据auto_clear_cache参数决定是否清理
+        if auto_clear_cache:
+            try:
+                if cache is None:
+                    cache = ModelCache()
+                cache.clear_cache()
+                print("❌ Inference error, cache auto-cleared")
+            except Exception as cleanup_error:
+                print(f"Warning: Error cache cleanup failed: {cleanup_error}")
+        else:
+            print("⚠️ Inference error occurred, cache retained")

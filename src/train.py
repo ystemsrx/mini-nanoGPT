@@ -16,6 +16,7 @@ from src.config import DEFAULT_CONFIG, IntegerTypes
 from src.db_manager import DBManager
 from src.gpt_model import GPTConfig, GPT, configure_optimizers
 from src.gpt_self_attn import GPTSelfAttnConfig, GPTSelfAttn, configure_optimizers_self_attn
+from src.infer_cache import ModelCache
 
 dbm = DBManager()
 
@@ -536,6 +537,14 @@ def train_model_generator(
                     }, f)
                 dbm.save_training_log(model_id, loss_log_path)
                 
+                # Clear inference cache to ensure next inference uses the latest model
+                try:
+                    cache = ModelCache()
+                    cache.clear_cache()
+                    print("Inference cache cleared after training stop")
+                except Exception as e:
+                    print(f"Warning: Failed to clear inference cache: {e}")
+                
                 stop_msg = "Training stopped by user, checkpoint saved."
                 print(stop_msg)
                 progress_html_stop = make_progress_html(iter_num, max_iters)
@@ -674,3 +683,11 @@ def train_model_generator(
 
     if ddp:
         destroy_process_group()
+
+    # Clear inference cache to ensure next inference uses the latest model
+    try:
+        cache = ModelCache()
+        cache.clear_cache()
+        print("Inference cache cleared after training completion")
+    except Exception as e:
+        print(f"Warning: Failed to clear inference cache: {e}")
