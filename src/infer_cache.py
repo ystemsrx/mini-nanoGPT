@@ -37,14 +37,36 @@ class ModelCache:
             self._lock = threading.RLock()
             self._initialized = True
     
-    def _get_cache_key(self, ckpt_path: str, device: str, dtype: str) -> str:
-        """Generate cache key"""
-        return f"{ckpt_path}:{device}:{dtype}"
+    def _get_cache_key(self, ckpt_path: str, device: str, dtype: str, model_type: str = "unknown") -> str:
+        """Generate cache key including model type to avoid conflicts"""
+        return f"{ckpt_path}:{device}:{dtype}:{model_type}"
+    
+    def _detect_model_type(self, model_args: dict) -> str:
+        """
+        Robustly detect model type from model_args
+        Returns 'self_attention' or 'basic'
+        """
+        # Check for self-attention specific parameters
+        self_attn_keys = [
+            'ffn_hidden_mult', 'qkv_bias', 'attn_dropout', 'resid_dropout',
+            'ln_eps', 'init_std', 'use_flash_attn', 'pos_encoding_type',
+            'rope_base', 'rope_cache_size', 'alibi_bias_scale', 'ffn_activation',
+            'attention_scale_factor', 'gradient_checkpointing'
+        ]
+        
+        # Also check for explicit use_self_attention flag
+        if model_args.get('use_self_attention', False):
+            return 'self_attention'
+        
+        # Check if any self-attention specific parameters exist
+        has_self_attn_params = any(key in model_args for key in self_attn_keys)
+        
+        return 'self_attention' if has_self_attn_params else 'basic'
     
     def get_model_and_meta(self, ckpt_path: str, data_dir: str, device: str, dtype: str, compile_model: bool = False) -> Tuple[Any, Any, Any, Any]:
         """
         Get cached model and metadata, load if not exists
-        Smart device allocation version
+        Smart device allocation version with improved model type detection
         """
         # If device not explicitly specified, use device manager to choose the best one
         if device == "auto" or device == DEFAULT_CONFIG["inference"]["device"]:
@@ -55,7 +77,22 @@ class ModelCache:
                 device = device_manager.get_best_device(memory_req, prefer_cuda=True)
                 print(f"Smart device selection: {device} (model size: {model_size_mb:.1f}MB)")
         
-        cache_key = self._get_cache_key(ckpt_path, device, dtype)
+        # Pre-load checkpoint to detect model type for cache key
+        if not os.path.exists(ckpt_path):
+            raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+        
+        try:
+            checkpoint = torch.load(ckpt_path, map_location='cpu')  # Load to CPU first to check args
+            model_args = checkpoint['model_args']
+            model_type = self._detect_model_type(model_args)
+            print(f"Detected model type: {model_type} for {os.path.basename(ckpt_path)}")
+        except Exception as e:
+            print(f"Warning: Failed to load checkpoint for type detection: {e}")
+            model_type = "unknown"
+            checkpoint = None
+            model_args = {}
+        
+        cache_key = self._get_cache_key(ckpt_path, device, dtype, model_type)
         
         with self._lock:
             # Check if checkpoint file has been modified since last cache
@@ -105,9 +142,18 @@ class ModelCache:
                     except StopIteration:
                         # Model has no parameters, remove from cache
                         del self._cache[cache_key]
+                    except Exception as e:
+                        print(f"Warning: Cache validation error: {e}, removing from cache")
+                        del self._cache[cache_key]
+            
+            # Also check and clean old format cache entries that might conflict
+            old_cache_key = f"{ckpt_path}:{device}:{dtype}"
+            if old_cache_key in self._cache:
+                print(f"Removing old format cache entry: {old_cache_key}")
+                del self._cache[old_cache_key]
             
             # Cache miss or invalid, reload model
-            print(f"Loading model: {ckpt_path} -> {device} ({dtype})")
+            print(f"Loading {model_type} model: {ckpt_path} -> {device} ({dtype})")
             
             # Clear device cache before loading to free memory
             if device.startswith('cuda:'):
@@ -116,83 +162,90 @@ class ModelCache:
             # Set device-related configuration
             device_type = 'cuda' if 'cuda' in device else 'cpu'
             
-            # Load checkpoint
-            checkpoint = torch.load(ckpt_path, map_location=device)
-            model_args = checkpoint['model_args']
+            # Load checkpoint if not already loaded
+            if checkpoint is None:
+                checkpoint = torch.load(ckpt_path, map_location=device)
+                model_args = checkpoint['model_args']
+                model_type = self._detect_model_type(model_args)
             
-            # Determine model type
-            is_self_attention_model = any(key in model_args for key in [
-                'ffn_hidden_mult', 'qkv_bias', 'attn_dropout', 'resid_dropout',
-                'ln_eps', 'init_std', 'use_flash_attn', 'pos_encoding_type',
-                'rope_base', 'rope_cache_size', 'alibi_bias_scale', 'ffn_activation'
-            ])
-            
-            # Create model
-            if is_self_attention_model:
-                # Get default parameters from config file instead of hardcoding
-                training_config = DEFAULT_CONFIG["training"]
-                default_self_attn_args = {
-                    'ffn_hidden_mult': training_config["ffn_hidden_mult"],
-                    'qkv_bias': training_config["qkv_bias"],
-                    'attn_dropout': training_config["attn_dropout"],
-                    'resid_dropout': training_config["resid_dropout"],
-                    'ln_eps': training_config["ln_eps"],
-                    'init_std': training_config["init_std"],
-                    'use_flash_attn': training_config["use_flash_attn"],
-                    'pos_encoding_type': training_config["pos_encoding_type"],
-                    'rope_base': training_config["rope_base"],
-                    'rope_cache_size': training_config["rope_cache_size"],
-                    'alibi_bias_scale': training_config["alibi_bias_scale"],
-                    'ffn_activation': training_config["ffn_activation"],
-                    'attention_scale_factor': training_config["attention_scale_factor"],
-                    'gradient_checkpointing': training_config["gradient_checkpointing"]
+            # Create model based on detected type
+            try:
+                if model_type == 'self_attention':
+                    # Get default parameters from config file instead of hardcoding
+                    training_config = DEFAULT_CONFIG["training"]
+                    default_self_attn_args = {
+                        'ffn_hidden_mult': training_config["ffn_hidden_mult"],
+                        'qkv_bias': training_config["qkv_bias"],
+                        'attn_dropout': training_config["attn_dropout"],
+                        'resid_dropout': training_config["resid_dropout"],
+                        'ln_eps': training_config["ln_eps"],
+                        'init_std': training_config["init_std"],
+                        'use_flash_attn': training_config["use_flash_attn"],
+                        'pos_encoding_type': training_config["pos_encoding_type"],
+                        'rope_base': training_config["rope_base"],
+                        'rope_cache_size': training_config["rope_cache_size"],
+                        'alibi_bias_scale': training_config["alibi_bias_scale"],
+                        'ffn_activation': training_config["ffn_activation"],
+                        'attention_scale_factor': training_config["attention_scale_factor"],
+                        'gradient_checkpointing': training_config["gradient_checkpointing"]
+                    }
+                    
+                    for key, default_val in default_self_attn_args.items():
+                        if key not in model_args:
+                            model_args[key] = default_val
+                    
+                    print(f"Creating GPTSelfAttn model with config: {list(model_args.keys())}")
+                    gptconf = GPTSelfAttnConfig(**model_args)
+                    model = GPTSelfAttn(gptconf)
+                else:
+                    print(f"Creating basic GPT model with config: {list(model_args.keys())}")
+                    gptconf = GPTConfig(**model_args)
+                    model = GPT(gptconf)
+                
+                # Load state dict
+                state_dict = checkpoint['model']
+                unwanted_prefix = '_orig_mod.'
+                for k, v in list(state_dict.items()):
+                    if k.startswith(unwanted_prefix):
+                        state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+                
+                model.load_state_dict(state_dict)
+                model.eval()
+                model.to(device)
+                
+                # Handle data type conversion
+                original_dtype = model_args.get('dtype', 'float32')
+                if dtype != original_dtype:
+                    try:
+                        ptdtype_target = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
+                        model = model.to(dtype=ptdtype_target)
+                        print(f"Data type conversion: {original_dtype} -> {dtype}")
+                    except Exception as e:
+                        print(f"Warning: Data type conversion failed: {e}")
+                        dtype = original_dtype
+                
+                # Compile model (if needed)
+                if compile_model:
+                    try:
+                        model = torch.compile(model)
+                        print("Model compilation completed")
+                    except Exception as e:
+                        print(f"Warning: Model compilation failed: {e}")
+                
+                # Cache model
+                self._cache[cache_key] = {
+                    'model': model,
+                    'gptconf': gptconf,
+                    'model_type': model_type
                 }
                 
-                for key, default_val in default_self_attn_args.items():
-                    if key not in model_args:
-                        model_args[key] = default_val
+                print(f"✅ Successfully loaded and cached {model_type} model")
                 
-                gptconf = GPTSelfAttnConfig(**model_args)
-                model = GPTSelfAttn(gptconf)
-            else:
-                gptconf = GPTConfig(**model_args)
-                model = GPT(gptconf)
-            
-            # Load state dict
-            state_dict = checkpoint['model']
-            unwanted_prefix = '_orig_mod.'
-            for k, v in list(state_dict.items()):
-                if k.startswith(unwanted_prefix):
-                    state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-            
-            model.load_state_dict(state_dict)
-            model.eval()
-            model.to(device)
-            
-            # Handle data type conversion
-            original_dtype = model_args.get('dtype', 'float32')
-            if dtype != original_dtype:
-                try:
-                    ptdtype_target = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
-                    model = model.to(dtype=ptdtype_target)
-                    print(f"Data type conversion: {original_dtype} -> {dtype}")
-                except Exception as e:
-                    print(f"Warning: Data type conversion failed: {e}")
-                    dtype = original_dtype
-            
-            # Compile model (if needed)
-            if compile_model:
-                try:
-                    model = torch.compile(model)
-                    print("Model compilation completed")
-                except Exception as e:
-                    print(f"Warning: Model compilation failed: {e}")
-            
-            # Cache model
-            self._cache[cache_key] = {
-                'model': model,
-                'gptconf': gptconf
-            }
+            except Exception as e:
+                print(f"❌ Failed to create {model_type} model: {e}")
+                import traceback
+                print(traceback.format_exc())
+                raise RuntimeError(f"Model creation failed for {model_type}: {e}")
             
             # Load and cache metadata
             meta_key = data_dir
@@ -296,30 +349,34 @@ class ModelCache:
         return encode, decode
     
     def clear_cache(self):
-        """强制彻底清除所有缓存"""
+        """Force complete cache cleanup with support for new cache key format"""
         with self._lock:
             print("🧹 Starting complete cache cleanup...")
             
-            # 清理所有模型缓存前先移动到GPU外
+            # Clean up all model caches by moving them to CPU first
             for cache_key, cached_data in list(self._cache.items()):
                 if isinstance(cached_data, dict) and 'model' in cached_data:
                     try:
                         model = cached_data['model']
+                        model_type = cached_data.get('model_type', 'unknown')
                         if hasattr(model, 'cpu'):
                             model.cpu()
                         del model
                     except Exception as e:
                         print(f"Warning during model cleanup: {e}")
+                elif not cache_key.endswith('_mtime'):
+                    # Clean up any other cache entries that are not modification time stamps
+                    pass
             
-            # 清空所有缓存字典
+            # Clear all cache dictionaries
             self._cache.clear()
             self._meta_cache.clear()
             
-            # 强制垃圾回收
+            # Force garbage collection
             import gc
             gc.collect()
             
-            # 清理CUDA缓存
+            # Clear CUDA cache
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
@@ -332,6 +389,39 @@ class ModelCache:
             return {
                 'model_cache_size': len(self._cache),
                 'meta_cache_size': len(self._meta_cache)
+            }
+    
+    def debug_cache_info(self) -> Dict[str, Any]:
+        """Get detailed cache information for debugging"""
+        with self._lock:
+            cache_details = {}
+            model_count = 0
+            
+            for cache_key, cached_data in self._cache.items():
+                if isinstance(cached_data, dict) and 'model' in cached_data:
+                    model_count += 1
+                    model_type = cached_data.get('model_type', 'unknown')
+                    cache_details[cache_key] = {
+                        'model_type': model_type,
+                        'has_model': True
+                    }
+                elif cache_key.endswith('_mtime'):
+                    cache_details[cache_key] = {
+                        'is_mtime': True,
+                        'value': cached_data
+                    }
+                else:
+                    cache_details[cache_key] = {
+                        'type': str(type(cached_data)),
+                        'has_model': False
+                    }
+            
+            return {
+                'total_cache_entries': len(self._cache),
+                'model_count': model_count,
+                'meta_cache_size': len(self._meta_cache),
+                'cache_details': cache_details,
+                'meta_cache_keys': list(self._meta_cache.keys())
             }
 
 
@@ -347,7 +437,7 @@ def cached_generate_text(
     device=DEFAULT_CONFIG["inference"]["device"],
     dtype=DEFAULT_CONFIG["inference"]["dtype"],
     compile_model=DEFAULT_CONFIG["inference"]["compile_model"],
-    auto_clear_cache=True  # 新增参数控制是否自动清理缓存
+    auto_clear_cache=True  # New parameter to control automatic cache cleanup
 ):
     """
     Efficient text generation function using cache
@@ -457,7 +547,7 @@ def cached_generate_text(
         final_text = "\n\n".join(accumulated_output)
         dbm.save_inference_history(model_id, final_text)
         
-        # 根据参数决定是否自动清理缓存
+        # Decide whether to auto-clear cache based on parameter
         if auto_clear_cache and cache:
             cache.clear_cache()
             print("✅ Inference completed, cache auto-cleared")
@@ -466,7 +556,7 @@ def cached_generate_text(
     
     except Exception as ex:
         yield f"An unexpected error occurred: {str(ex)}"
-        # 发生错误时根据auto_clear_cache参数决定是否清理
+        # Decide whether to clear cache on error based on auto_clear_cache parameter
         if auto_clear_cache:
             try:
                 if cache is None:

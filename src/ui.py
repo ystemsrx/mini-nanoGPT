@@ -1240,10 +1240,10 @@ def build_app_interface(selected_lang: str = "zh"):
                 top_k_int = int(float(top_k_)) if top_k_ is not None and str(top_k_).strip() != "" else None
                 seed_inf_int = int(float(seed_inf_))
 
-                # 获取缓存实例以便后续清理
+                # Get cache instance for subsequent cleanup
                 cache = ModelCache()
                 
-                # 使用缓存推理函数以获得更好的性能，禁用自动缓存清理以便统一管理
+                # Use cached inference function for better performance, disable auto cache cleanup for unified management
                 gen = cached_generate_text(
                     data_dir=data_dir_inf_, out_dir=out_dir_inf_,
                     prompt=prompt_,
@@ -1252,15 +1252,15 @@ def build_app_interface(selected_lang: str = "zh"):
                     temperature=temperature_float,
                     top_k=top_k_int,
                     seed=seed_inf_int,
-                    device=device_inf_,  # 使用用户选择的设备
+                    device=device_inf_,  # Use user-selected device
                     dtype=dtype_inf_,
                     compile_model=DEFAULT_CONFIG["inference"]["compile_model"],
-                    auto_clear_cache=False  # 禁用自动清理，改为统一管理
+                    auto_clear_cache=False  # Disable auto cleanup, use unified management instead
                 )
                 
-                # 批量处理输出以提高UI响应性
+                # Batch process output to improve UI responsiveness
                 text_buffer = ""
-                buffer_threshold = 3  # 每3个字符批量输出
+                buffer_threshold = 3  # Batch output every 3 characters
                 
                 for piece in gen:
                     text_buffer += piece
@@ -1269,7 +1269,7 @@ def build_app_interface(selected_lang: str = "zh"):
                         yield output_stream_text
                         text_buffer = ""
                 
-                # 输出剩余内容
+                # Output remaining content
                 if text_buffer:
                     output_stream_text += text_buffer
                     yield output_stream_text
@@ -1284,7 +1284,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 yield error_msg
                 
             finally:
-                # 统一清理缓存 - 确保单独推理后释放资源
+                # Unified cache cleanup - ensure resources are released after single inference
                 try:
                     if cache is None:
                         cache = ModelCache()
@@ -1945,11 +1945,15 @@ def build_app_interface(selected_lang: str = "zh"):
             """
             Optimized dual model concurrent inference using caching system and improved concurrency strategy
             """
+            print("🔥 Starting dual model comparison inference...")
+            
             if not left_out_dir or not right_out_dir:
-                return "Please select two models first.", "Please select two models first."
+                error_msg = "Please select two models for comparison first."
+                return error_msg, error_msg
             
             if not prompt.strip():
-                return "Prompt is empty, please enter starting text.", "Prompt is empty, please enter starting text."
+                error_msg = "Prompt is empty, please enter starting text."
+                return error_msg, error_msg
             
             # Initialize output
             left_output = ""
@@ -1968,7 +1972,8 @@ def build_app_interface(selected_lang: str = "zh"):
                         'dtype': left_dtype
                     }
                 except ValueError as e:
-                    yield f"Left model parameter error: {str(e)}", right_output
+                    error_msg = f"Left model parameter error: {str(e)}"
+                    yield error_msg, right_output
                     return
                     
                 try:
@@ -1981,7 +1986,8 @@ def build_app_interface(selected_lang: str = "zh"):
                         'dtype': right_dtype
                     }
                 except ValueError as e:
-                    yield left_output, f"Right model parameter error: {str(e)}"
+                    error_msg = f"Right model parameter error: {str(e)}"
+                    yield left_output, error_msg
                     return
                 
                 # Get cache instance to optimize model loading
@@ -1989,10 +1995,69 @@ def build_app_interface(selected_lang: str = "zh"):
                 cache_info = cache.get_cache_info()
                 print(f"🔍 Comparison inference started - Cache status: {cache_info}")
                 
-                # Smart device allocation - estimate memory requirements and assign optimal devices
+                # Verify checkpoint files exist and get model info
                 left_ckpt_path = left_out_dir if left_out_dir.endswith('.pt') else os.path.join(left_out_dir, 'ckpt.pt')
                 right_ckpt_path = right_out_dir if right_out_dir.endswith('.pt') else os.path.join(right_out_dir, 'ckpt.pt')
                 
+                if not os.path.exists(left_ckpt_path):
+                    error_msg = f"Left model checkpoint not found: {left_ckpt_path}"
+                    yield error_msg, right_output
+                    return
+                    
+                if not os.path.exists(right_ckpt_path):
+                    error_msg = f"Right model checkpoint not found: {right_ckpt_path}"
+                    yield left_output, error_msg
+                    return
+                
+                print(f"✅ Both checkpoint files verified")
+                
+                # Pre-check model types and compatibility
+                try:
+                    left_checkpoint = torch.load(left_ckpt_path, map_location='cpu')
+                    left_model_args = left_checkpoint['model_args']
+                    left_model_type = cache._detect_model_type(left_model_args)
+                    
+                    right_checkpoint = torch.load(right_ckpt_path, map_location='cpu')
+                    right_model_args = right_checkpoint['model_args']
+                    right_model_type = cache._detect_model_type(right_model_args)
+                    
+                    print(f"🔍 Model types detected - Left: {left_model_type}, Right: {right_model_type}")
+                    
+                    # Check vocab size compatibility for comparison
+                    left_vocab_size = left_model_args.get('vocab_size', 0)
+                    right_vocab_size = right_model_args.get('vocab_size', 0)
+                    
+                    if left_vocab_size != right_vocab_size:
+                        print(f"⚠️ Warning: Different vocab sizes - Left: {left_vocab_size}, Right: {right_vocab_size}")
+                        
+                    # Test model loading capability
+                    try:
+                        left_model, left_gptconf, left_encode, left_decode = cache.get_model_and_meta(
+                            left_ckpt_path, left_data_dir, 'cpu', left_dtype
+                        )
+                        print(f"✅ Left model ({left_model_type}) loaded successfully")
+                        
+                        right_model, right_gptconf, right_encode, right_decode = cache.get_model_and_meta(
+                            right_ckpt_path, right_data_dir, 'cpu', right_dtype
+                        )
+                        print(f"✅ Right model ({right_model_type}) loaded successfully")
+                        
+                        # Clear CPU models to free memory before actual inference
+                        del left_model, right_model
+                        import gc
+                        gc.collect()
+                        
+                    except Exception as model_load_error:
+                        error_msg = f"Model loading test failed: {str(model_load_error)}"
+                        print(f"❌ {error_msg}")
+                        yield error_msg, error_msg
+                        return
+                        
+                except Exception as e:
+                    print(f"⚠️ Warning: Model compatibility check failed: {e}")
+                    # Continue anyway, let the inference attempt reveal specific issues
+                
+                # Smart device allocation - estimate memory requirements and assign optimal devices
                 left_memory_req = 0
                 right_memory_req = 0
                 
@@ -2033,7 +2098,7 @@ def build_app_interface(selected_lang: str = "zh"):
                                 device=assigned_device,  # Use intelligently allocated device
                                 dtype=params['dtype'],
                                 compile_model=DEFAULT_CONFIG["inference"]["compile_model"],
-                                auto_clear_cache=False  # 在对比推理中禁用自动清理，改为统一清理
+                                auto_clear_cache=False  # Disable auto cleanup in comparison inference, do unified cleanup instead
                             )
                             
                             # Batch process generated text fragments to reduce queue operations
@@ -2054,6 +2119,9 @@ def build_app_interface(selected_lang: str = "zh"):
                             
                         except Exception as e:
                             error_msg = f"{model_name} generation error: {str(e)}"
+                            print(f"❌ {error_msg}")
+                            import traceback
+                            print(traceback.format_exc())
                             result_queue.put(('error', error_msg))
                             result_queue.put(('done', None))
                     
@@ -2062,6 +2130,7 @@ def build_app_interface(selected_lang: str = "zh"):
                         run_cached_inference, 
                         left_data_dir, left_out_dir, left_params, left_queue, "Left model", left_device
                     )
+                    
                     right_future = executor.submit(
                         run_cached_inference, 
                         right_data_dir, right_out_dir, right_params, right_queue, "Right model", right_device
@@ -2077,7 +2146,6 @@ def build_app_interface(selected_lang: str = "zh"):
                     while not (left_done and right_done):
                         current_time = time.time()
                         updated = False
-                        batch_update = False
                         
                         # Batch process left model output
                         left_batch = []
@@ -2131,12 +2199,13 @@ def build_app_interface(selected_lang: str = "zh"):
                     
                     # Wait for tasks to complete
                     try:
-                        left_future.result(timeout=1.0)
-                        right_future.result(timeout=1.0)
+                        left_future.result(timeout=10.0)  # Increased timeout
+                        right_future.result(timeout=10.0)
+                        print("✅ Both inference tasks completed")
                     except concurrent.futures.TimeoutError:
-                        print("Warning: Some inference tasks may not have completed properly")
+                        print("⚠️ Warning: Some inference tasks may not have completed properly")
                     except Exception as e:
-                        print(f"Warning: Task completion error: {e}")
+                        print(f"⚠️ Warning: Task completion error: {e}")
                     
                     # Final output
                     yield left_output, right_output
@@ -2158,7 +2227,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 yield left_output, right_output
                 
             finally:
-                # 统一清理缓存 - 确保对比推理后释放资源
+                # Unified cache cleanup - ensure resources are released after comparison inference
                 try:
                     if cache is None:
                         cache = ModelCache()
