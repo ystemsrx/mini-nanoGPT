@@ -38,7 +38,28 @@ You can train a model through an intuitive graphical interface!
 
 ## 🚀 Getting Started
 
-### 1. Environment Setup
+### Option 1: Docker Deployment (Recommended) 🐳
+
+The easiest way to get started!
+
+```bash
+# Clone the repository
+git clone --depth 1 https://github.com/ystemsrx/mini-nanoGPT.git
+cd mini-nanogpt
+
+# Start with Docker Compose (recommended)
+docker-compose up --build
+
+# Or build and run manually
+docker build -t mini-nanogpt .
+docker run --gpus all -p 7860:7860 -v $(pwd)/data:/app/data mini-nanogpt
+```
+
+This will automatically build the Docker image and run the container. The container will automatically detect your system environment (CPU/GPU). Meanwhile, the `data`, `models`, and `assets` directories in the current working directory will be mounted into the container, allowing you to store data directly in these directories.
+
+Once started, visit http://localhost:7860 to access the application.
+
+### Option 2: Local Installation
 
 ```bash
 # Clone the repository

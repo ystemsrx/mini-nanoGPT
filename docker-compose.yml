@@ -1,0 +1,22 @@
+services:
+  mini-nanogpt:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mini-nanogpt
+    ports:
+      - "7860:7860"
+    volumes:
+      # Mount data directory for persistence
+      - ./data:/app/data
+      - ./out:/app/out
+      # Mount assets directory for db
+      - ./assets:/app/assets
+    environment:
+      - PYTHONUNBUFFERED=1
+      - GRADIO_SERVER_NAME=0.0.0.0
+      - GRADIO_SERVER_PORT=7860
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    # GPU support - use runtime instead of deploy for better compatibility
+    runtime: nvidia

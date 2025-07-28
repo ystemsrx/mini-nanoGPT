@@ -35,7 +35,29 @@ Mini-NanoGPT 是一个帮助你轻松入门 GPT 模型的工具。无论你是�
 
 ## 🚀 快速开始
 
-### 1. 环境准备
+### 方式一：Docker 部署（推荐）🐳
+
+最简单的启动方式！
+
+```bash
+# 克隆仓库
+git clone --depth 1 https://github.com/ystemsrx/mini-nanoGPT.git
+cd mini-nanogpt
+
+# 使用 Docker Compose 启动（推荐）
+docker-compose up --build
+
+# 或手动构建运行
+docker build -t mini-nanogpt .
+docker run --gpus all -p 7860:7860 -v $(pwd)/data:/app/data mini-nanogpt
+```
+
+这将会自动构建 Docker 镜像并运行容器，容器会自动检测你的系统环境（CPU/GPU），同时，会将当前目录下的 `data`、`models` 和 `assets` 目录挂载到容器中，你可以直接在这些目录下存放数据。
+
+启动后访问 http://localhost:7860 即可。
+
+### 方式二：本地安装
+
 ```bash
 # 克隆仓库
 git clone --depth 1 https://github.com/ystemsrx/mini-nanoGPT.git

@@ -76,6 +76,7 @@ def generate_text(
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
+        # Extract device type for autocast - always use 'cuda' for any CUDA device
         device_type = 'cuda' if 'cuda' in device else 'cpu'
         ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
         ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
