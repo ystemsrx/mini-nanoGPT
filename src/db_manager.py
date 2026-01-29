@@ -192,6 +192,39 @@ class DBManager:
         row = cur.fetchone()
         return dict(row) if row else None
 
+    def get_model(self, model_id: int) -> Optional[dict]:
+        """
+        Retrieves detailed model information including derived paths (out_dir, processed_data_dir).
+        Returns None if model not found.
+        """
+        info = self.get_model_basic_info(model_id)
+        if not info:
+            return None
+            
+        # Get basic info
+        out_dir_rel = info["dir_path"]
+        name = info["name"]
+        
+        # Calculate derived paths
+        # Assuming standard structure:
+        # out_dir (model dir) = dir_path
+        # processed_data_dir = data/{folder_name}/processed
+        
+        folder_name = os.path.basename(out_dir_rel)
+        processed_data_dir_rel = os.path.join("data", folder_name, "processed")
+        
+        # We return absolute paths to safely use in other modules
+        out_dir_abs = self._abs(out_dir_rel)
+        processed_data_dir_abs = self._abs(processed_data_dir_rel)
+        
+        return {
+            "id": model_id,
+            "name": name,
+            "out_dir": out_dir_abs,
+            "processed_data_dir": processed_data_dir_abs,
+            "dir_path": out_dir_rel # Keep original too if needed
+        }
+
     def rename_model(self, model_id: int, new_name: str):
         """
         Updates the model's name in the database and renames associated directories.

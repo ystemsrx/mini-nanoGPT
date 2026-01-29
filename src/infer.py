@@ -12,6 +12,19 @@ from src.db_manager import DBManager
 from src.gpt_model import GPTConfig, GPT
 from src.gpt_self_attn import GPTSelfAttnConfig, GPTSelfAttn
 
+
+class UnknownTokenError(Exception):
+    """Exception raised when encoding encounters tokens not in vocabulary."""
+    def __init__(self, unknown_tokens, message=None):
+        self.unknown_tokens = unknown_tokens
+        if message is None:
+            tokens_str = ', '.join(repr(t) for t in unknown_tokens[:10])
+            if len(unknown_tokens) > 10:
+                tokens_str += f'... (and {len(unknown_tokens) - 10} more)'
+            message = f"Prompt contains tokens not in vocabulary: {tokens_str}"
+        super().__init__(message)
+
+
 dbm = DBManager()
 
 def safe_decode(decode_func, tokens, fallback_char=""):
@@ -182,9 +195,10 @@ def generate_text(
         tokenizer_type = meta.get('tokenizer', 'character level')
         stoi, itos = meta['stoi'], meta['itos']
 
-        # If 'old2new' mapping exists in meta, a tokenizer was used.
-        if 'old2new' in meta:
-            old2new = meta['old2new']
+        # If 'old2new' or 'old2new_mapping' exists in meta, a tokenizer was used.
+        # Support both key names for compatibility
+        old2new = meta.get('old2new') or meta.get('old2new_mapping')
+        if old2new is not None:
             new2old = {new: old for old, new in old2new.items()}
 
             # Choose encoding/decoding methods based on tokenizer type.
@@ -199,8 +213,11 @@ def generate_text(
                         def encode(s):
                             # Ensure the full prompt is tokenized correctly.
                             ids = tokenizer.encode(s).ids
-                            # Use a default value strategy to retain all tokens.
-                            return [old2new.get(id, old2new.get(0, 0)) for id in ids]
+                            # Check for unknown tokens (not in old2new mapping)
+                            unknown_tokens = [id for id in ids if id not in old2new]
+                            if unknown_tokens:
+                                raise UnknownTokenError(unknown_tokens)
+                            return [old2new[id] for id in ids]
 
                         def decode(l):
                             # Use a default value strategy to process all tokens.
@@ -211,13 +228,19 @@ def generate_text(
                         print(f"Warning: fail to find tokenizer file: {tokenizer_path}")
                         # Use mappings from meta.
                         def encode(s):
-                            return [stoi.get(ch, 0) for ch in s]
+                            unknown_chars = [ch for ch in s if ch not in stoi]
+                            if unknown_chars:
+                                raise UnknownTokenError(unknown_chars)
+                            return [stoi[ch] for ch in s]
                         def decode(l):
                             return ''.join([itos.get(i, '') for i in l])
                 except ImportError:
                     # Tokenizers library not found, use mappings from meta.
                     def encode(s):
-                        return [stoi.get(ch, 0) for ch in s]
+                        unknown_chars = [ch for ch in s if ch not in stoi]
+                        if unknown_chars:
+                            raise UnknownTokenError(unknown_chars)
+                        return [stoi[ch] for ch in s]
                     def decode(l):
                         return ''.join([itos.get(i, '') for i in l])
 
@@ -227,8 +250,11 @@ def generate_text(
 
                 def encode(s):
                     ids = enc.encode(s, allowed_special={"<|endoftext|>"})
-                    # Use a default value strategy to retain all tokens.
-                    return [old2new.get(id, old2new.get(0, 0)) for id in ids]
+                    # Check for unknown tokens (not in old2new mapping)
+                    unknown_tokens = [id for id in ids if id not in old2new]
+                    if unknown_tokens:
+                        raise UnknownTokenError(unknown_tokens)
+                    return [old2new[id] for id in ids]
 
                 def decode(l):
                     # Use a default value strategy to process all tokens.
@@ -238,13 +264,19 @@ def generate_text(
             else:
                 # Default method.
                 def encode(s):
-                    return [stoi.get(ch, 0) for ch in s]
+                    unknown_chars = [ch for ch in s if ch not in stoi]
+                    if unknown_chars:
+                        raise UnknownTokenError(unknown_chars)
+                    return [stoi[ch] for ch in s]
                 def decode(l):
                     return ''.join([itos.get(i, '') for i in l])
         else:
             # Character-level encoding (no ID remapping).
             def encode(s):
-                return [stoi.get(ch, 0) for ch in s]
+                unknown_chars = [ch for ch in s if ch not in stoi]
+                if unknown_chars:
+                    raise UnknownTokenError(unknown_chars)
+                return [stoi[ch] for ch in s]
             def decode(l):
                 return ''.join([itos.get(i, '') for i in l])
 
@@ -302,7 +334,7 @@ def generate_text(
 
                         # Attempt to decode the current token sequence.
                         # When using a tokenizer, decode the sequence.
-                        if 'old2new' in meta and tokenizer_type in ['custom_json', 'gpt2']:
+                        if old2new is not None and tokenizer_type in ['custom_json', 'gpt2']:
                             # Decode the entire sequence.
                             full_tokens = idx[0].tolist()
                             current_text = decode(full_tokens)

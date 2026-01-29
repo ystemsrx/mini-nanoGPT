@@ -16,6 +16,19 @@ from src.device_manager import device_manager
 from src.db_manager import DBManager
 
 
+class UnknownTokenError(Exception):
+    """Exception raised when encoding encounters tokens not in vocabulary."""
+    def __init__(self, unknown_tokens, message=None):
+        self.unknown_tokens = unknown_tokens
+        if message is None:
+            tokens_str = ', '.join(repr(t) for t in unknown_tokens[:10])
+            if len(unknown_tokens) > 10:
+                tokens_str += f'... (and {len(unknown_tokens) - 10} more)'
+            message = f"Prompt contains tokens not in vocabulary: {tokens_str}"
+        super().__init__(message)
+
+
+
 class ModelCache:
     """
     Efficient model caching system with model reuse and memory management
@@ -282,11 +295,12 @@ class ModelCache:
                     stoi = meta.get('stoi', {})
                     itos = meta.get('itos', {})
                     
-                    # Handle different token mapping formats
-                    if 'old2new' in meta and 'new2old' in meta:
-                        old2new = meta['old2new']
-                        new2old = meta['new2old']
-                        tokenizer_type = meta.get('tokenizer_type', 'char_level')
+                    # Handle different token mapping formats - support both key names for compatibility
+                    old2new = meta.get('old2new') or meta.get('old2new_mapping')
+                    if old2new is not None:
+                        # Generate new2old mapping from old2new
+                        new2old = {new_id: old_id for old_id, new_id in old2new.items()}
+                        tokenizer_type = meta.get('tokenizer_type') or meta.get('tokenizer', 'char_level')
                         
                         if tokenizer_type == 'custom_json':
                             try:
@@ -297,19 +311,29 @@ class ModelCache:
                                     
                                     def encode(s):
                                         ids = tokenizer.encode(s).ids
-                                        return [old2new.get(id, old2new.get(0, 0)) for id in ids]
+                                        # Check for unknown tokens (not in old2new mapping)
+                                        unknown_tokens = [id for id in ids if id not in old2new]
+                                        if unknown_tokens:
+                                            raise UnknownTokenError(unknown_tokens)
+                                        return [old2new[id] for id in ids]
                                     
                                     def decode(l):
                                         original_ids = [new2old.get(id, new2old.get(0, 0)) for id in l]
                                         return safe_decode(tokenizer.decode, original_ids)
                                 else:
                                     def encode(s):
-                                        return [stoi.get(ch, 0) for ch in s]
+                                        unknown_chars = [ch for ch in s if ch not in stoi]
+                                        if unknown_chars:
+                                            raise UnknownTokenError(unknown_chars)
+                                        return [stoi[ch] for ch in s]
                                     def decode(l):
                                         return ''.join([itos.get(i, '') for i in l])
                             except ImportError:
                                 def encode(s):
-                                    return [stoi.get(ch, 0) for ch in s]
+                                    unknown_chars = [ch for ch in s if ch not in stoi]
+                                    if unknown_chars:
+                                        raise UnknownTokenError(unknown_chars)
+                                    return [stoi[ch] for ch in s]
                                 def decode(l):
                                     return ''.join([itos.get(i, '') for i in l])
                         
@@ -319,7 +343,11 @@ class ModelCache:
                             
                             def encode(s):
                                 ids = enc.encode(s, allowed_special={"<|endoftext|>"})
-                                return [old2new.get(id, old2new.get(0, 0)) for id in ids]
+                                # Check for unknown tokens (not in old2new mapping)
+                                unknown_tokens = [id for id in ids if id not in old2new]
+                                if unknown_tokens:
+                                    raise UnknownTokenError(unknown_tokens)
+                                return [old2new[id] for id in ids]
                             
                             def decode(l):
                                 original_ids = [new2old.get(id, new2old.get(0, 0)) for id in l]
@@ -327,22 +355,34 @@ class ModelCache:
                         
                         else:
                             def encode(s):
-                                return [stoi.get(ch, 0) for ch in s]
+                                unknown_chars = [ch for ch in s if ch not in stoi]
+                                if unknown_chars:
+                                    raise UnknownTokenError(unknown_chars)
+                                return [stoi[ch] for ch in s]
                             def decode(l):
                                 return ''.join([itos.get(i, '') for i in l])
                     else:
                         def encode(s):
-                            return [stoi.get(ch, 0) for ch in s]
+                            unknown_chars = [ch for ch in s if ch not in stoi]
+                            if unknown_chars:
+                                raise UnknownTokenError(unknown_chars)
+                            return [stoi[ch] for ch in s]
                         def decode(l):
                             return ''.join([itos.get(i, '') for i in l])
             except:
                 def encode(s):
-                    return [stoi.get(ch, 0) for ch in s]
+                    unknown_chars = [ch for ch in s if ch not in stoi]
+                    if unknown_chars:
+                        raise UnknownTokenError(unknown_chars)
+                    return [stoi[ch] for ch in s]
                 def decode(l):
                     return ''.join([itos.get(i, '') for i in l])
         else:
             def encode(s):
-                return [stoi.get(ch, 0) for ch in s]
+                unknown_chars = [ch for ch in s if ch not in stoi]
+                if unknown_chars:
+                    raise UnknownTokenError(unknown_chars)
+                return [stoi[ch] for ch in s]
             def decode(l):
                 return ''.join([itos.get(i, '') for i in l])
         

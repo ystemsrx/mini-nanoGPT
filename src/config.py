@@ -89,6 +89,18 @@ DEFAULT_CONFIG = {
         "device": selected_device,
         "dtype": "float16",
         "compile_model": False
+    },
+    "sft": {
+        "dataset_path": "",
+        "epochs": 3,
+        "learning_rate": 2e-5,
+        "batch_size": 4,
+        "max_seq_length": 512,
+        "gradient_accumulation_steps": 4,
+        "warmup_ratio": 0.1,
+        "save_steps": 100,
+        "logging_steps": 10,
+        "system_prompt": "You are a helpful assistant."
     }
 }
 
@@ -220,7 +232,37 @@ LANG_JSON = {
         "compare_generate_btn": "Generate",
         "compare_shared_prompt": "Shared Prompt",
         "compare_left_output": "Left Model Output",
-        "compare_right_output": "Right Model Output"
+        "compare_right_output": "Right Model Output",
+
+        # SFT Tab
+        "sft_tab": "SFT",
+        "sft_base_model": "Base Model (Pre-trained)",
+        "sft_dataset_file": "Dataset File (JSON)",
+        "sft_dataset_dir": "Dataset Directory",
+        "sft_format_status": "Format Validation",
+        "sft_epochs": "Epochs",
+        "sft_learning_rate": "Learning Rate",
+        "sft_batch_size": "Batch Size",
+        "sft_max_seq_length": "Max Sequence Length",
+        "sft_gradient_accumulation": "Gradient Accumulation Steps",
+        "sft_warmup_ratio": "Warmup Ratio",
+        "sft_system_prompt": "System Prompt",
+        "sft_start_btn": "Start SFT Training",
+        "sft_stop_btn": "Stop SFT",
+        "sft_log": "SFT Training Log",
+        "sft_plot": "SFT Loss Curve",
+        "sft_result": "SFT Result",
+        "sft_valid_format": "✅ Valid Alpaca Format",
+        "sft_invalid_format": "❌ Invalid Format",
+        "sft_no_dataset": "No dataset loaded",
+
+        # Chat Mode
+        "inf_chat_mode": "Chat Mode (for SFT models)",
+        "inf_chat_history": "Conversation History",
+        "inf_user_input": "Your Message",
+        "inf_send_btn": "Send",
+        "inf_clear_chat": "Clear Chat",
+        "inf_system_prompt": "System Prompt"
     },
     "zh": {
         "app_title": "Mini Nano GPT",
@@ -348,6 +390,36 @@ LANG_JSON = {
         "compare_generate_btn": "生成 (Generate)",
         "compare_shared_prompt": "提示词 (Shared Prompt)",
         "compare_left_output": "左侧模型输出",
-        "compare_right_output": "右侧模型输出"
+        "compare_right_output": "右侧模型输出",
+
+        # SFT Tab
+        "sft_tab": "SFT微调",
+        "sft_base_model": "基座模型（预训练）",
+        "sft_dataset_file": "数据集文件 (JSON)",
+        "sft_dataset_dir": "数据集目录",
+        "sft_format_status": "格式验证",
+        "sft_epochs": "训练轮数 (Epochs)",
+        "sft_learning_rate": "学习率 (Learning Rate)",
+        "sft_batch_size": "批量大小 (Batch Size)",
+        "sft_max_seq_length": "最大序列长度 (Max Sequence Length)",
+        "sft_gradient_accumulation": "梯度累积步数 (Gradient Accumulation)",
+        "sft_warmup_ratio": "预热比例 (Warmup Ratio)",
+        "sft_system_prompt": "系统提示词 (System Prompt)",
+        "sft_start_btn": "开始SFT训练",
+        "sft_stop_btn": "停止SFT",
+        "sft_log": "SFT训练日志",
+        "sft_plot": "SFT损失曲线",
+        "sft_result": "SFT结果",
+        "sft_valid_format": "✅ Alpaca格式有效",
+        "sft_invalid_format": "❌ 格式无效",
+        "sft_no_dataset": "未加载数据集",
+
+        # Chat Mode
+        "inf_chat_mode": "对话模式（用于SFT模型）",
+        "inf_chat_history": "对话历史",
+        "inf_user_input": "您的消息",
+        "inf_send_btn": "发送",
+        "inf_clear_chat": "清空对话",
+        "inf_system_prompt": "系统提示词"
     }
 }

@@ -14,6 +14,22 @@ from src.utils import compose_model_dirs
 
 dbm = DBManager()
 
+# Special token IDs from Qwen tokenizer.json (required for SFT)
+# These must be included in the vocabulary even if not present in training data
+QWEN_SPECIAL_TOKEN_IDS = [
+    151643,  # <|endoftext|> / EOT
+    151644,  # <|im_start|>
+    151645,  # <|im_end|>
+]
+
+# Chat template role token IDs (required for SFT with Qwen chat format)
+# These are the token IDs for "system", "user", "assistant" in the Qwen tokenizer
+QWEN_CHAT_ROLE_TOKEN_IDS = [
+    8948,    # "system"
+    872,     # "user"
+    77091,   # "assistant"
+]
+
 def get_chunks(text, n):
     """
     Splits the text into 'n' roughly equal chunks for parallel processing.
@@ -240,8 +256,19 @@ def process_data(
             eot_id_old = enc.eot_token # Original EOT token ID from GPT-2
 
         # Simplify the subword vocabulary: map original token IDs to new consecutive IDs (0, 1, 2, ...)
-        # This ensures the vocabulary only contains tokens actually present in the dataset.
-        used_old_ids = sorted(list(set(tokens_full))) # Unique sorted original token IDs
+        # This ensures the vocabulary only contains tokens actually present in the dataset,
+        # PLUS special tokens required for SFT (Qwen chat template tokens).
+        used_old_ids_set = set(tokens_full)
+        
+        # For custom tokenizer (Qwen), always include special tokens for SFT compatibility
+        if tok_name == "custom_json":
+            for special_id in QWEN_SPECIAL_TOKEN_IDS:
+                used_old_ids_set.add(special_id)
+            # Also include chat role tokens ("system", "user", "assistant")
+            for role_id in QWEN_CHAT_ROLE_TOKEN_IDS:
+                used_old_ids_set.add(role_id)
+        
+        used_old_ids = sorted(list(used_old_ids_set)) # Unique sorted original token IDs
         old2new = {old_id: new_id for new_id, old_id in enumerate(used_old_ids)}
         tokens = [old2new[t] for t in tokens_full] # Remapped token sequence
 

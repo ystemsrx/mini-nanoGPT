@@ -145,7 +145,7 @@ def train_model_generator(
         if num_eval_seeds != 0: # Only error if num_eval_seeds was non-zero and invalid
             error_msg = f"Error in evaluation seeds: {str(e)}"
             print(error_msg)
-            yield (f"<div style='color: red;'>{error_msg}</div>", error_msg, empty_plot_data) # Yield empty data
+            yield (f"<div style='color: red;'>{error_msg}</div>", "", empty_plot_data) # Yield empty data
             return
         else:
             num_eval_seeds = 0
@@ -158,7 +158,7 @@ def train_model_generator(
     except ValueError as e:
         msg = f"Error: seed '{seed}' is invalid. {str(e)}"
         print(msg)
-        yield (f"<div style='color: red;'>{msg}</div>", msg, empty_plot_data)
+        yield (f"<div style='color: red;'>{msg}</div>", "", empty_plot_data)
         return
 
     ddp = int(os.environ.get('RANK', -1)) != -1
@@ -213,14 +213,14 @@ def train_model_generator(
     if num_eval_seeds == 0 and not os.path.exists(train_bin_path):
         err = f"Error: train.bin not found at {train_bin_path}, can't train."
         print(err)
-        yield (f"<div style='color:red;'>{err}</div>", err, empty_plot_data)
+        yield (f"<div style='color:red;'>{err}</div>", "", empty_plot_data)
         return
 
     # Check for val.bin if validation is expected (num_eval_seeds > 0 OR (num_eval_seeds == 0 AND has_val for periodic eval))
     if num_eval_seeds > 0 and not has_val: # Eval mode requires val.bin
         err = f"Error: val.bin not found at {val_bin_path}, can't evaluate."
         print(err)
-        yield (f"<div style='color:red;'>{err}</div>", err, empty_plot_data)
+        yield (f"<div style='color:red;'>{err}</div>", "", empty_plot_data)
         return
     
     def get_batch(split="train"):
@@ -260,7 +260,7 @@ def train_model_generator(
     if not os.path.exists(meta_path):
         err = f"Error: meta.pkl not found at {meta_path}"
         print(err)
-        yield (f"<div style='color:red;'>{err}</div>", err, empty_plot_data)
+        yield (f"<div style='color:red;'>{err}</div>", "", empty_plot_data)
         return
     with open(meta_path, 'rb') as f:
         meta = pickle.load(f)
@@ -299,7 +299,7 @@ def train_model_generator(
         if not os.path.exists(ckpt_path_eval):
             msg = f"Error: Checkpoint {ckpt_path_eval} not found for evaluation mode."
             print(msg)
-            yield (f"<div style='color:red;'>{msg}</div>", msg, empty_plot_data)
+            yield (f"<div style='color:red;'>{msg}</div>", "", empty_plot_data)
             return
         checkpoint = torch.load(ckpt_path_eval, map_location=device)
 
@@ -325,7 +325,7 @@ def train_model_generator(
         if not os.path.exists(ckpt_path):
             msg = f"Error: Cannot resume, checkpoint {ckpt_path} not found."
             print(msg)
-            yield (f"<div style='color:red;'>{msg}</div>", msg, empty_plot_data)
+            yield (f"<div style='color:red;'>{msg}</div>", "", empty_plot_data)
             return
         checkpoint = torch.load(ckpt_path, map_location=device)
 
@@ -362,7 +362,7 @@ def train_model_generator(
     else: # Should not happen if UI restricts init_from
         msg = "Error: Invalid 'init_from' value. Choose 'scratch' or 'resume'."
         print(msg)
-        yield (f"<div style='color:red;'>{msg}</div>", msg, empty_plot_data)
+        yield (f"<div style='color:red;'>{msg}</div>", "", empty_plot_data)
         return
 
     if block_size < model.config.block_size:
@@ -378,7 +378,7 @@ def train_model_generator(
         if not has_val: # Should have been caught earlier, but double-check
             msg = f"Error: val.bin not found, critical for evaluation mode."
             print(msg)
-            yield (f"<div style='color:red;'>{msg}</div>", msg, empty_plot_data)
+            yield (f"<div style='color:red;'>{msg}</div>", "", empty_plot_data)
             return
         
         model.eval()

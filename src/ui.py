@@ -1,6 +1,7 @@
 # src/ui.py
 import os
 import pickle
+from pathlib import Path
 import numpy as np
 import torch
 import torch._dynamo
@@ -13,9 +14,14 @@ from src.config import DEFAULT_CONFIG, LANG_JSON
 from src.db_manager import DBManager
 from src.data_process import process_data
 from src.train import train_model_generator, stop_training
-from src.infer import generate_text
-from src.infer_cache import cached_generate_text, ModelCache
+from src.sft import (
+    validate_alpaca_format, load_sft_dataset, sft_train_generator,
+    stop_sft_training, chat_generate
+)
+from src.infer_cache import cached_generate_text, ModelCache, UnknownTokenError
 from src.device_manager import device_manager
+from src.gpt_model import GPTConfig, GPT
+from src.gpt_self_attn import GPTSelfAttnConfig, GPTSelfAttn
 
 import queue
 import concurrent.futures
@@ -391,6 +397,15 @@ def generate_loss_chart_html(
 """
     return html_content
 
+def make_progress_html(progress_val, max_val, color='blue'):
+    """Generate HTML for a progress bar."""
+    return (
+        f"<div style='width: 100%; height: 20px; margin-bottom: 5px;'>"
+        f"<progress value='{progress_val}' max='{max_val if max_val > 0 else 1}' "
+        f"style='width: 100%; height: 20px; color: {color};'></progress>"
+        "</div>"
+    )
+
 def build_app_interface(selected_lang: str = "zh"):
     """
     Top-level UI function
@@ -739,6 +754,92 @@ def build_app_interface(selected_lang: str = "zh"):
                     with gr.Column(scale=2):
                         train_plot = gr.HTML(label=T["train_plot"]) # Changed from gr.Image
 
+            # -------------- SFT Tab -------------- #
+            with gr.Tab(T["sft_tab"]) as sft_tab:
+                gr.Markdown("### Supervised Fine-Tuning (SFT)")
+                
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        sft_base_model = gr.Dropdown(
+                            label=T["sft_base_model"],
+                            choices=_get_model_choices_list(),
+                            value=None,
+                            interactive=True
+                        )
+                        sft_refresh_model_btn = gr.Button("🔄 Refresh Models", size="sm")
+                    
+                    with gr.Column(scale=2):
+                        sft_dataset_file = gr.File(
+                            label=T["sft_dataset_file"],
+                            file_types=[".json"],
+                            type="filepath"
+                        )
+                        sft_dataset_dir = gr.Textbox(
+                            label=T["sft_dataset_dir"],
+                            placeholder="Or enter directory path containing JSON files..."
+                        )
+                
+                sft_format_status = gr.Textbox(
+                    label=T["sft_format_status"],
+                    value=T["sft_no_dataset"],
+                    interactive=False
+                )
+                sft_validate_btn = gr.Button("🔍 Validate Dataset")
+                
+                # Store loaded dataset in state
+                sft_dataset_state = gr.State(value=[])
+                
+                with gr.Row():
+                    with gr.Column():
+                        sft_epochs = gr.Number(
+                            label=T["sft_epochs"],
+                            value=DEFAULT_CONFIG["sft"]["epochs"],
+                            minimum=1, maximum=100
+                        )
+                        sft_batch_size = gr.Number(
+                            label=T["sft_batch_size"],
+                            value=DEFAULT_CONFIG["sft"]["batch_size"],
+                            minimum=1, maximum=64
+                        )
+                        sft_gradient_accumulation = gr.Number(
+                            label=T["sft_gradient_accumulation"],
+                            value=DEFAULT_CONFIG["sft"]["gradient_accumulation_steps"],
+                            minimum=1, maximum=32
+                        )
+                    with gr.Column():
+                        sft_learning_rate = gr.Number(
+                            label=T["sft_learning_rate"],
+                            value=DEFAULT_CONFIG["sft"]["learning_rate"],
+                            step=1e-6
+                        )
+                        sft_max_seq_length = gr.Number(
+                            label=T["sft_max_seq_length"],
+                            value=DEFAULT_CONFIG["sft"]["max_seq_length"],
+                            minimum=32, maximum=4096
+                        )
+                        sft_warmup_ratio = gr.Number(
+                            label=T["sft_warmup_ratio"],
+                            value=DEFAULT_CONFIG["sft"]["warmup_ratio"],
+                            step=0.01, minimum=0, maximum=1
+                        )
+                
+                sft_system_prompt = gr.Textbox(
+                    label=T["sft_system_prompt"],
+                    value=DEFAULT_CONFIG["sft"]["system_prompt"],
+                    lines=2
+                )
+                
+                with gr.Row():
+                    sft_start_btn = gr.Button(T["sft_start_btn"], variant="primary")
+                    sft_stop_btn = gr.Button(T["sft_stop_btn"], variant="stop")
+                
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        sft_progress = gr.HTML(label="SFT Progress")
+                        sft_log = gr.HTML(label=T["sft_log"], elem_id="sft-log-box")
+                    with gr.Column(scale=2):
+                        sft_plot = gr.HTML(label=T["sft_plot"])
+
             # -------------- Inference Tab -------------- #
             with gr.Tab(T["infer_tab"]) as inf_tab:
                 with gr.Row():
@@ -769,8 +870,43 @@ def build_app_interface(selected_lang: str = "zh"):
                     seed_box_inf = gr.Number(label=T["inf_seed"],
                                              value=DEFAULT_CONFIG["inference"]["seed"])
 
-                inf_btn = gr.Button(T["inf_start_btn"])
-                inf_output = gr.Textbox(label=T["inf_result"], lines=10, interactive=False)
+                # Chat Mode Toggle
+                inf_chat_mode = gr.Checkbox(label=T["inf_chat_mode"], value=False)
+                
+                # Chat Interface (Hidden by default, shown when Chat Mode is enabled)
+                with gr.Group(visible=False) as chat_interface_group:
+                    chatbot = gr.Chatbot(label=T["inf_chat_history"], height=400)
+                    inf_system_prompt = gr.Textbox(
+                        label=T["inf_system_prompt"], 
+                        value=DEFAULT_CONFIG["sft"]["system_prompt"]
+                    )
+                    with gr.Row():
+                        inf_user_input = gr.Textbox(
+                            label=T["inf_user_input"], 
+                            placeholder="Type a message...",
+                            scale=4
+                        )
+                        inf_send_btn = gr.Button(T["inf_send_btn"], variant="primary", scale=1)
+                    inf_clear_btn = gr.Button(T["inf_clear_chat"])
+                
+                # Standard Inference Interface (Hidden when Chat Mode is enabled)
+                with gr.Group(visible=True) as standard_interface_group:
+                    inf_btn = gr.Button(T["inf_start_btn"])
+                    inf_output = gr.Textbox(label=T["inf_result"], lines=10, interactive=False)
+
+                # Visibility Logic
+                def toggle_chat_mode(is_chat):
+                    return {
+                        chat_interface_group: gr.update(visible=is_chat),
+                        standard_interface_group: gr.update(visible=not is_chat),
+                        prompt_box: gr.update(visible=not is_chat)
+                    }
+                
+                inf_chat_mode.change(
+                    fn=toggle_chat_mode,
+                    inputs=[inf_chat_mode],
+                    outputs=[chat_interface_group, standard_interface_group, prompt_box]
+                )
 
             # -------------- Comparison Tab -------------- #
             with gr.Tab(T["compare_tab"]) as comp_tab:
@@ -1057,6 +1193,20 @@ def build_app_interface(selected_lang: str = "zh"):
             rope_cache_size_, alibi_bias_scale_, ffn_activation_, attention_scale_factor_,
             gradient_checkpointing_, cache_strategy_, max_cache_size_, strict_validation_, fallback_on_error_
         ):
+            # Pre-training cleanup: Clear any residual GPU resources from previous failed training
+            try:
+                import gc
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                # Also clear model cache to ensure fresh start
+                cache = ModelCache()
+                cache.clear_cache()
+                print("🧹 Pre-training cleanup completed")
+            except Exception as cleanup_err:
+                print(f"Warning: Pre-training cleanup encountered an issue: {cleanup_err}")
+            
             empty_plot_html = generate_loss_chart_html([], [])
             
             # Enhanced input validation with better error messages
@@ -1093,7 +1243,7 @@ def build_app_interface(selected_lang: str = "zh"):
                     
             except ValueError as e:
                 error_msg = f"Parameter validation error: {str(e)}"
-                yield (f"<div style='color:red;'>{error_msg}</div>", error_msg, empty_plot_html)
+                yield (f"<div style='color:red;'>{error_msg}</div>", "", empty_plot_html)
                 return
 
             try:
@@ -1191,7 +1341,30 @@ def build_app_interface(selected_lang: str = "zh"):
                 import traceback
                 print(f"Training callback error: {traceback.format_exc()}") # Server-side log
                 err_msg = f"Runtime Error in Training: {str(e)}"
-                yield (f"<div style='color:red;'>{err_msg}</div>", err_msg, empty_plot_html)
+                
+                # Critical: Clean up GPU resources after training failure
+                try:
+                    import gc
+                    # Force garbage collection to release Python objects
+                    gc.collect()
+                    
+                    # Clear CUDA cache if available
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        torch.cuda.synchronize()
+                    
+                    # Clear model cache to ensure next training starts fresh
+                    try:
+                        cache = ModelCache()
+                        cache.clear_cache()
+                    except Exception as cache_err:
+                        print(f"Warning: Failed to clear model cache: {cache_err}")
+                    
+                    print("🧹 Post-error cleanup completed - GPU resources released")
+                except Exception as cleanup_err:
+                    print(f"Warning: Post-error cleanup failed: {cleanup_err}")
+                
+                yield (f"<div style='color:red;'>{err_msg}</div>", "", empty_plot_html)
 
         train_btn.click(
             fn=training_cb,
@@ -1275,6 +1448,12 @@ def build_app_interface(selected_lang: str = "zh"):
                     yield output_stream_text
                 
                 print("✅ Single model inference completed successfully")
+            
+            except UnknownTokenError as e:
+                # Handle unknown token errors - display user-friendly error message
+                error_msg = f"❌ Error: {str(e)}\n\nInference aborted. Please ensure your prompt only contains characters/tokens present in the training vocabulary."
+                print(f"❌ Unknown token error: {error_msg}")
+                yield error_msg
                     
             except Exception as e:
                 import traceback
@@ -2116,6 +2295,13 @@ def build_app_interface(selected_lang: str = "zh"):
                                 result_queue.put(('data', text_buffer))
                             
                             result_queue.put(('done', None))
+                        
+                        except UnknownTokenError as e:
+                            # Handle unknown token errors with user-friendly message
+                            error_msg = f"❌ {model_name} Error: {str(e)}\n\nInference aborted. Please ensure your prompt only contains characters/tokens present in the training vocabulary."
+                            print(f"❌ {model_name} Unknown token error: {str(e)}")
+                            result_queue.put(('error', error_msg))
+                            result_queue.put(('done', None))
                             
                         except Exception as e:
                             error_msg = f"{model_name} generation error: {str(e)}"
@@ -2248,6 +2434,323 @@ def build_app_interface(selected_lang: str = "zh"):
             ],
             outputs=[comp_left_output, comp_right_output]
         )
+        # ------------------------------------------------------------------
+        # SFT Callbacks
+        # ------------------------------------------------------------------
+        
+        def sft_refresh_models():
+            choices = _get_model_choices_list()
+            return gr.update(choices=choices, value=None)
+
+        sft_refresh_model_btn.click(
+            fn=sft_refresh_models,
+            inputs=[],
+            outputs=[sft_base_model]
+        )
+        
+        def sft_load_dataset(file_obj, dir_path):
+            current_lang = lang_select.value
+            T_current = LANG_JSON[current_lang]
+            
+            # Reset status
+            msg = T_current["sft_no_dataset"]
+            dataset = []
+            
+            # Prioritize file upload
+            if file_obj is not None:
+                dataset, msg = load_sft_dataset(file_path=file_obj.name)
+            elif dir_path and dir_path.strip():
+                dataset, msg = load_sft_dataset(dir_path=dir_path)
+            
+            is_valid, _ = validate_alpaca_format(dataset)
+            status_val = T_current["sft_valid_format"] if is_valid else f"{T_current['sft_invalid_format']}: {msg}"
+            
+            return status_val, dataset
+            
+        sft_validate_btn.click(
+            fn=sft_load_dataset,
+            inputs=[sft_dataset_file, sft_dataset_dir],
+            outputs=[sft_format_status, sft_dataset_state]
+        )
+        
+        def sft_train_cb(
+            model_selection, dataset, epochs, lr, batch_size, 
+            max_seq_len, grad_acc, warmup_ratio, system_prompt
+        ):
+            current_lang = lang_select.value
+            T_current = LANG_JSON[current_lang]
+            
+            # Pre-SFT training cleanup: Clear any residual GPU resources from previous failed training
+            try:
+                import gc
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                cache = ModelCache()
+                cache.clear_cache()
+                print("🧹 Pre-SFT training cleanup completed")
+            except Exception as cleanup_err:
+                print(f"Warning: Pre-SFT training cleanup encountered an issue: {cleanup_err}")
+            
+            # Generate dummy plot data
+            empty_plot = generate_loss_chart_html([], [])
+            
+            if not model_selection or " - " not in model_selection:
+                yield f"<div style='color:red;'>❌ Please select a base model</div>", "", empty_plot
+                return
+                
+            model_id = int(model_selection.split(" - ")[0])
+            model_info = dbm.get_model(model_id)
+            if not model_info:
+                yield f"<div style='color:red;'>❌ Model not found</div>", "", empty_plot
+                return
+                
+            base_ckpt_path = os.path.join(model_info['out_dir'], 'ckpt.pt')
+            
+            if not dataset:
+                yield f"<div style='color:red;'>{T_current['sft_no_dataset']}</div>", "", empty_plot
+                return
+                
+            # Create SFT output directory
+            sft_out_dir = os.path.join(model_info['out_dir'], 'sft')
+            os.makedirs(sft_out_dir, exist_ok=True)
+            
+            yield make_progress_html(0, 100), "🚀 Starting SFT Training...", empty_plot
+            
+            try:
+                generator = sft_train_generator(
+                    base_model_ckpt_path=base_ckpt_path,
+                    data_dir=model_info['processed_data_dir'], # Not strictly used but passed for compat
+                    dataset=dataset,
+                    out_dir=sft_out_dir,
+                    epochs=int(epochs),
+                    learning_rate=lr,
+                    batch_size=int(batch_size),
+                    max_seq_length=int(max_seq_len),
+                    gradient_accumulation_steps=int(grad_acc),
+                    warmup_ratio=warmup_ratio,
+                    system_prompt=system_prompt
+                )
+                
+                for progress_html, log_msg, plot_data in generator:
+                    # Plot data format: (steps, losses, val_steps, val_losses)
+                    if plot_data and len(plot_data) >= 2:
+                         # Convert steps/losses to lists of tuples for chart generator
+                        train_data = list(zip(plot_data[0], plot_data[1]))
+                        val_data = list(zip(plot_data[2], plot_data[3])) if len(plot_data) > 3 else []
+                        plot_html = generate_loss_chart_html(train_data, val_data)
+                    else:
+                        plot_html = empty_plot
+                        
+                    yield progress_html, log_msg, plot_html
+            except Exception as e:
+                import traceback
+                print(f"SFT Training callback error: {traceback.format_exc()}")
+                err_msg = f"Runtime Error in SFT Training: {str(e)}"
+                
+                # Critical: Clean up GPU resources after SFT training failure
+                try:
+                    import gc
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        torch.cuda.synchronize()
+                    try:
+                        cache = ModelCache()
+                        cache.clear_cache()
+                    except Exception as cache_err:
+                        print(f"Warning: Failed to clear model cache: {cache_err}")
+                    print("🧹 Post-SFT-error cleanup completed - GPU resources released")
+                except Exception as cleanup_err:
+                    print(f"Warning: Post-SFT-error cleanup failed: {cleanup_err}")
+                
+                yield f"<div style='color:red;'>{err_msg}</div>", "", empty_plot
+
+        sft_start_btn.click(
+            fn=sft_train_cb,
+            inputs=[
+                sft_base_model, sft_dataset_state,
+                sft_epochs, sft_learning_rate, sft_batch_size,
+                sft_max_seq_length, sft_gradient_accumulation,
+                sft_warmup_ratio, sft_system_prompt
+            ],
+            outputs=[sft_progress, sft_log, sft_plot]
+        )
+        
+        def sft_stop_cb():
+            stop_sft_training()
+            return "🛑 Stopping SFT..."
+            
+        sft_stop_btn.click(
+            fn=sft_stop_cb,
+            inputs=[],
+            outputs=[sft_log]
+        )
+
+        # ------------------------------------------------------------------
+        # Chat Callbacks
+        # ------------------------------------------------------------------
+        
+        def chat_cb(user_msg, history, model_sel, sys_prompt, max_tokens, temp, top_k, seed, device_val):
+            if not user_msg:
+                return "", history
+            
+            # Update history with user message
+            history = history or []
+            history.append((user_msg, None))
+            yield "", history
+            
+            # Validate model
+            if not model_sel or " - " not in model_sel:
+                history[-1] = (user_msg, "❌ Please select a model first.")
+                yield "", history
+                return
+
+            model_id = int(model_sel.split(" - ")[0])
+            model_info = dbm.get_model(model_id)
+            if not model_info:
+                history[-1] = (user_msg, "❌ Model not found.")
+                yield "", history
+                return
+            
+            # Load model (using cache if possible - reuse inference cache logic or simplified)
+            # For simplicity, we'll load directly here, but ideally we should use ModelCache
+            # Let's use a simplified version since we need streaming reference
+            
+            try:
+                ckpt_path = os.path.join(model_info['out_dir'], 'ckpt.pt')
+                sft_ckpt_path = os.path.join(model_info['out_dir'], 'sft', 'ckpt_sft.pt')
+                
+                # Prefer SFT checkpoint if available
+                load_path = sft_ckpt_path if os.path.exists(sft_ckpt_path) else ckpt_path
+                
+                # Check for tokenizer
+                tokenizer_path = Path.cwd() / "assets" / "tokenizer.json"
+                if not tokenizer_path.exists():
+                     history[-1] = (user_msg, "❌ tokenizer.json not found.")
+                     yield "", history
+                     return
+                
+                from tokenizers import Tokenizer
+                tokenizer = Tokenizer.from_file(str(tokenizer_path))
+                
+                # Load meta.pkl to get old2new mapping for token ID remapping
+                # model_info['processed_data_dir'] points to data/{model_name}/processed
+                processed_data_dir = model_info.get('processed_data_dir', '')
+                meta_path = os.path.join(processed_data_dir, 'meta.pkl') if processed_data_dir else None
+                old2new_mapping = None
+                new2old_mapping = None
+                
+                if meta_path and os.path.exists(meta_path):
+                    import pickle
+                    with open(meta_path, 'rb') as f:
+                        meta = pickle.load(f)
+                    # Try both possible key names for compatibility
+                    old2new_mapping = meta.get('old2new_mapping') or meta.get('old2new')
+                    if old2new_mapping:
+                        new2old_mapping = {new_id: old_id for old_id, new_id in old2new_mapping.items()}
+                
+                if old2new_mapping is None:
+                    history[-1] = (user_msg, f"❌ Error: Token ID mapping not found. meta_path={meta_path}, exists={os.path.exists(meta_path) if meta_path else False}. Please ensure the model was trained with the custom tokenizer.")
+                    yield "", history
+                    return
+                
+                # Load model
+                checkpoint = torch.load(load_path, map_location=device_val)
+                model_args = checkpoint['model_args']
+                
+                # Determine model type
+                is_self_attention_model = any(key in model_args for key in [
+                    'ffn_hidden_mult', 'qkv_bias', 'attn_dropout', 'resid_dropout'
+                ])
+                
+                if is_self_attention_model:
+                    gptconf = GPTSelfAttnConfig(**model_args)
+                    model = GPTSelfAttn(gptconf)
+                else:
+                    gptconf = GPTConfig(**model_args)
+                    model = GPT(gptconf)
+                    
+                state_dict = checkpoint['model']
+                unwanted_prefix = '_orig_mod.'
+                for k in list(state_dict.keys()):
+                    if k.startswith(unwanted_prefix):
+                        state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+                model.load_state_dict(state_dict)
+                model.to(device_val)
+                model.eval()
+                
+                # Prepare messages from history
+                messages = []
+                for user_text, bot_text in history[:-1]: # Skip last pending
+                    messages.append({"role": "user", "content": user_text})
+                    if bot_text:
+                        messages.append({"role": "assistant", "content": bot_text})
+                
+                messages.append({"role": "user", "content": user_msg})
+                
+                # Generate with proper token ID mappings
+                # Note: device is automatically inferred from model parameters
+                generator = chat_generate(
+                    model=model,
+                    tokenizer=tokenizer,
+                    messages=messages,
+                    system_prompt=sys_prompt,
+                    max_new_tokens=int(max_tokens),
+                    temperature=temp,
+                    top_k=int(top_k),
+                    old2new_mapping=old2new_mapping,
+                    new2old_mapping=new2old_mapping
+                )
+                
+                partial_response = ""
+                for token in generator:
+                    partial_response += token
+                    history[-1] = (user_msg, partial_response)
+                    yield "", history
+                    
+            except Exception as e:
+                import traceback
+                error_detail = traceback.format_exc()
+                print(f"Chat error: {error_detail}")
+                history[-1] = (user_msg, f"❌ Error: {str(e)}")
+                yield "", history
+
+        inf_send_btn.click(
+            fn=chat_cb,
+            inputs=[
+                inf_user_input, chatbot,
+                # In inference tab, the model dropdown is actually... wait, 
+                # looking at UI, currently inference tab doesn't have its own model dropdown,
+                # it uses selected_model_id from global or previous tabs?
+                # Ah, existing UI design is a bit disconnected.
+                # Let's check where `inf_start_btn` gets model from.
+                # It uses `model_dropdown` from the sidebar I assume?
+                # Yes, `model_dropdown` is defined at start.
+                model_dropdown, 
+                inf_system_prompt,
+                max_new_tokens_box, temperature_box, top_k_box, seed_box_inf, device_box_inf
+            ],
+            outputs=[inf_user_input, chatbot]
+        )
+        
+        inf_user_input.submit(
+             fn=chat_cb,
+            inputs=[
+                inf_user_input, chatbot,
+                model_dropdown, 
+                inf_system_prompt,
+                max_new_tokens_box, temperature_box, top_k_box, seed_box_inf, device_box_inf
+            ],
+            outputs=[inf_user_input, chatbot]
+        )
+        
+        def clear_chat():
+            return []
+            
+        inf_clear_btn.click(fn=clear_chat, inputs=[], outputs=[chatbot])
+
     return demo
 
 # ----------------- Launch -------------------
