@@ -16,7 +16,7 @@ from src.data_process import process_data
 from src.train import train_model_generator, stop_training
 from src.sft import (
     validate_alpaca_format, load_sft_dataset, sft_train_generator,
-    stop_sft_training, chat_generate
+    stop_sft_training, chat_generate, tokenize_user_input
 )
 from src.infer_cache import cached_generate_text, ModelCache, UnknownTokenError
 from src.device_manager import device_manager
@@ -875,7 +875,11 @@ def build_app_interface(selected_lang: str = "zh"):
                 
                 # Chat Interface (Hidden by default, shown when Chat Mode is enabled)
                 with gr.Group(visible=False) as chat_interface_group:
-                    chatbot = gr.Chatbot(label=T["inf_chat_history"], height=400)
+                    chatbot = gr.Chatbot(
+                        label=T["inf_chat_history"], 
+                        height=400,
+                        sanitize_html=False  # Allow HTML rendering for token highlighting
+                    )
                     inf_system_prompt = gr.Textbox(
                         label=T["inf_system_prompt"], 
                         value=DEFAULT_CONFIG["sft"]["system_prompt"]
@@ -886,13 +890,24 @@ def build_app_interface(selected_lang: str = "zh"):
                             placeholder="Type a message...",
                             scale=4
                         )
-                        inf_send_btn = gr.Button(T["inf_send_btn"], variant="primary", scale=1)
-                    inf_clear_btn = gr.Button(T["inf_clear_chat"])
+                        with gr.Column(scale=1, min_width=100):
+                            inf_send_btn = gr.Button(T["inf_send_btn"], variant="primary")
+                            inf_clear_btn = gr.Button(T["inf_clear_chat"])
+                    
+                    # Chat advanced output section (collapsed by default)
+                    with gr.Accordion(T["inf_chat_advanced"], open=False) as chat_advanced_accordion:
+                        # Response token details table only (user tokenization is now shown inline in message bubble)
+                        chat_advanced_output = gr.HTML(label=T["inf_advanced_output"], elem_id="chat-advanced-html")
                 
                 # Standard Inference Interface (Hidden when Chat Mode is enabled)
                 with gr.Group(visible=True) as standard_interface_group:
                     inf_btn = gr.Button(T["inf_start_btn"])
-                    inf_output = gr.Textbox(label=T["inf_result"], lines=10, interactive=False)
+                    # Use HTML for token-highlighted output
+                    inf_output = gr.HTML(label=T["inf_result"], elem_id="inf-result-html")
+                    
+                    # Advanced output section (collapsed by default)
+                    with gr.Accordion(T["inf_advanced_output"], open=False) as advanced_accordion:
+                        inf_advanced_output = gr.HTML(label=T["inf_advanced_output"], elem_id="inf-advanced-html")
 
                 # Visibility Logic
                 def toggle_chat_mode(is_chat):
@@ -1396,14 +1411,169 @@ def build_app_interface(selected_lang: str = "zh"):
 
         # ------------------------------------------------------------------
         # Call backs: inference
+        
+        # Token highlight colors - alternating colors for adjacent tokens
+        TOKEN_COLORS = [
+            "#FFE066",  # Yellow
+            "#98D8AA",  # Light green
+            "#87CEEB",  # Sky blue
+            "#DDA0DD",  # Plum
+            "#F0B27A",  # Light orange
+            "#AED6F1",  # Light blue
+            "#F9E79F",  # Light yellow
+            "#D5A6BD",  # Light purple
+        ]
+        
+        def _escape_html(text):
+            """Escape HTML special characters"""
+            return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;").replace("\n", "<br>")
+        
+        def _generate_token_html(tokens_with_text, prompt_text="", prompt_tokens=None):
+            """
+            Generate HTML with token highlighting
+            tokens_with_text: list of dicts with 'text' and optionally 'token_detail'
+            prompt_text: raw prompt text (used if prompt_tokens is None)
+            prompt_tokens: list of dicts with 'text', 'original_id', 'mapped_id', 'in_vocab' for each prompt token
+            """
+            html_parts = []
+            html_parts.append('<div style="font-family: monospace; white-space: pre-wrap; line-height: 1.6; padding: 10px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e0e0e0;">')
+            
+            # Add prompt part with RED border box to highlight user input
+            if prompt_tokens:
+                html_parts.append('<span style="display: inline; border: 2px solid #e53935; border-radius: 4px; padding: 2px 4px; background: rgba(229, 57, 53, 0.08); margin-right: 4px;">')
+                for i, token_info in enumerate(prompt_tokens):
+                    text = token_info.get('text', '')
+                    if not text:
+                        continue
+                    escaped_text = _escape_html(text)
+                    color = TOKEN_COLORS[i % len(TOKEN_COLORS)]
+                    orig_id = token_info.get('original_id', '?')
+                    mapped_id = token_info.get('mapped_id', '?')
+                    in_vocab = token_info.get('in_vocab', True)
+                    border_color = "#4caf50" if in_vocab else "#f44336"
+                    tooltip = f"Prompt Token #{i+1}&#10;Text: '{escaped_text}'&#10;Original ID: {orig_id}&#10;Mapped ID: {mapped_id}&#10;In Vocab: {'Yes' if in_vocab else 'No'}"
+                    html_parts.append(f'<span style="background-color: {color}; padding: 1px 2px; border-radius: 3px; border-bottom: 2px solid {border_color}; cursor: help;" title="{tooltip}">{escaped_text}</span>')
+                html_parts.append('</span>')
+            elif prompt_text:
+                # Fallback: RED border box for prompt without token details
+                escaped_prompt = _escape_html(prompt_text)
+                html_parts.append(f'<span style="display: inline; border: 2px solid #e53935; border-radius: 4px; padding: 2px 4px; background: rgba(229, 57, 53, 0.08); color: #333;">{escaped_prompt}</span>')
+            
+            # Add generated tokens with highlighting
+            color_idx = 0
+            for item in tokens_with_text:
+                text = item.get('text', '')
+                if not text:
+                    continue
+                
+                escaped_text = _escape_html(text)
+                color = TOKEN_COLORS[color_idx % len(TOKEN_COLORS)]
+                
+                # Create highlighted span with tooltip
+                token_detail = item.get('token_detail')
+                if token_detail:
+                    candidates = token_detail.get('top5_candidates', [])
+                    selected_id = token_detail.get('selected_token_id')
+                    tooltip_parts = [f"#{token_detail.get('position', '?')}: {escaped_text}"]
+                    for i, cand in enumerate(candidates[:6]):  # Show up to 6 (selected + top 5)
+                        prob_pct = cand['probability'] * 100
+                        cand_text = _escape_html(cand['text'])
+                        # Check if this candidate is the selected one (using is_selected field or token_id comparison)
+                        is_selected = cand.get('is_selected', False) or cand['token_id'] == selected_id
+                        marker = "→" if is_selected else " "
+                        tooltip_parts.append(f"{marker}{i+1}. '{cand_text}' ({prob_pct:.1f}%)")
+                    tooltip = "&#10;".join(tooltip_parts)
+                    html_parts.append(f'<span style="background-color: {color}; padding: 1px 2px; border-radius: 3px; cursor: help;" title="{tooltip}">{escaped_text}</span>')
+                else:
+                    html_parts.append(f'<span style="background-color: {color}; padding: 1px 2px; border-radius: 3px;">{escaped_text}</span>')
+                
+                color_idx += 1
+            
+            html_parts.append('</div>')
+            return "".join(html_parts)
+        
+        def _generate_advanced_html(all_token_details):
+            """
+            Generate detailed HTML for the advanced output panel with fresh and elegant styling
+            """
+            html_parts = []
+            html_parts.append('<div style="font-family: system-ui, -apple-system, sans-serif; font-size: 13px;">')
+            
+            for sample_info in all_token_details:
+                sample_idx = sample_info.get('sample_index', 0)
+                token_details = sample_info.get('token_details', [])
+                
+                # Sample header - 淡雅的青色
+                html_parts.append(f'<div style="margin: 16px 0 10px 0; padding: 6px 16px; background: #e0f7fa; color: #006064; border-radius: 20px; font-weight: 600; display: inline-block; font-size: 13px; border: 1px solid #b2ebf2;">Sample {sample_idx + 1}</div>')
+                
+                # Table with inline styles
+                html_parts.append('<div style="max-height: 500px; overflow-y: auto; margin-bottom: 24px; border: 1px solid #f0f0f0; border-radius: 8px;">')
+                html_parts.append('<table style="width: 100%; border-collapse: collapse; font-size: 13px; background: white;">')
+                
+                # Header - 清新淡灰背景，深灰文字
+                html_parts.append('<thead><tr style="background: #f8f9fa; border-bottom: 1px solid #e9ecef;">')
+                html_parts.append('<th style="padding: 12px 16px; text-align: center; color: #5f6368; font-weight: 600; width: 60px;">#</th>')
+                html_parts.append('<th style="padding: 12px 16px; text-align: left; color: #5f6368; font-weight: 600; width: 140px;">Selected</th>')
+                html_parts.append('<th style="padding: 12px 16px; text-align: left; color: #5f6368; font-weight: 600;">Top 5 Candidates</th>')
+                html_parts.append('</tr></thead><tbody>')
+                
+                for row_idx, detail in enumerate(token_details):
+                    pos = detail.get('position', 0)
+                    selected_text = _escape_html(detail.get('selected_token_text', ''))
+                    selected_id = detail.get('selected_token_id', -1)
+                    candidates = detail.get('top5_candidates', [])
+                    
+                    # Find selected probability
+                    selected_prob = 0
+                    non_selected_candidates = []
+                    for cand in candidates:
+                        is_selected = cand.get('is_selected', False) or cand['token_id'] == selected_id
+                        if is_selected:
+                            selected_prob = cand['probability'] * 100
+                        else:
+                            non_selected_candidates.append(cand)
+                    
+                    # Only show first 5 non-selected candidates with capsule style
+                    cand_html_parts = []
+                    for idx, cand in enumerate(non_selected_candidates[:5]):
+                        prob_pct = cand['probability'] * 100
+                        cand_text = _escape_html(cand['text'])
+                        # Capsule style with shadow - 清新白底胶囊
+                        cand_html_parts.append(
+                            f'<span style="display: inline-block; margin: 3px 6px 3px 0; padding: 4px 10px; '
+                            f'background: #ffffff; color: #555; '
+                            f'border-radius: 12px; font-size: 12px; white-space: nowrap; '
+                            f'box-shadow: 0 1px 2px rgba(0,0,0,0.08); border: 1px solid #ebebeb;">'
+                            f'<span style="color: #bbb; font-size: 10px; margin-right: 4px;">#{idx+1}</span>'
+                            f'{cand_text} <span style="color: #999; font-size: 11px;">({prob_pct:.1f}%)</span></span>'
+                        )
+                    
+                    candidates_html = "".join(cand_html_parts) if cand_html_parts else '<span style="color: #ccc;">-</span>'
+                    
+                    # Row background alternation - 极其淡的条纹
+                    row_bg = "#fbfbfb" if row_idx % 2 == 1 else "white"
+                    
+                    html_parts.append(f'<tr style="background: {row_bg}; border-bottom: 1px solid #f5f5f5;">')
+                    html_parts.append(f'<td style="padding: 10px 16px; text-align: center; color: #9aa0a6; font-size: 12px;">{pos + 1}</td>')
+                    
+                    # Selected cell - 清新淡绿高亮块
+                    html_parts.append(f'<td style="padding: 10px 16px;"><span style="background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; border-radius: 6px; padding: 4px 8px; display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 500;">{selected_text} <span style="opacity: 0.7; font-size: 11px; margin-left: 2px;">{selected_prob:.1f}%</span></span></td>')
+                    html_parts.append(f'<td style="padding: 10px 16px; line-height: 1.6;">{candidates_html}</td>')
+                    html_parts.append('</tr>')
+                
+                html_parts.append('</tbody></table></div>')
+            
+            html_parts.append('</div>')
+            return "".join(html_parts)
+        
         def inference_cb(
             data_dir_inf_, out_dir_inf_,
             prompt_, num_samples_, max_new_tokens_,
             temperature_, top_k_, dtype_inf_, device_inf_, seed_inf_
         ):
             cache = None
+            prompt_tokens = None  # Will hold prompt tokenization info
             try:
-                output_stream_text = ""
                 print("🚀 Single model inference started")
                 
                 # Ensure numeric conversions are robust
@@ -1416,7 +1586,58 @@ def build_app_interface(selected_lang: str = "zh"):
                 # Get cache instance for subsequent cleanup
                 cache = ModelCache()
                 
-                # Use cached inference function for better performance, disable auto cache cleanup for unified management
+                # Try to tokenize the prompt for display
+                try:
+                    meta_path = os.path.join(data_dir_inf_, 'meta.pkl')
+                    if os.path.exists(meta_path):
+                        import pickle
+                        with open(meta_path, 'rb') as f:
+                            meta = pickle.load(f)
+                        old2new_mapping = meta.get('old2new_mapping') or meta.get('old2new')
+                        tokenizer_type = meta.get('tokenizer_type') or meta.get('tokenizer', 'char_level')
+                        
+                        if tokenizer_type == 'custom_json' and old2new_mapping:
+                            tokenizer_path = Path.cwd() / "assets" / "tokenizer.json"
+                            if tokenizer_path.exists():
+                                from tokenizers import Tokenizer
+                                tokenizer = Tokenizer.from_file(str(tokenizer_path))
+                                prompt_tokens = tokenize_user_input(tokenizer, prompt_, old2new_mapping)
+                        elif tokenizer_type == 'gpt2' and old2new_mapping:
+                            import tiktoken
+                            enc = tiktoken.get_encoding("gpt2")
+                            # Simple tokenization for gpt2
+                            ids = enc.encode(prompt_, allowed_special={"<|endoftext|>"})
+                            prompt_tokens = []
+                            for orig_id in ids:
+                                try:
+                                    decoded_text = enc.decode([orig_id])
+                                except:
+                                    decoded_text = f"<token_{orig_id}>"
+                                mapped_id = old2new_mapping.get(orig_id, orig_id)
+                                in_vocab = orig_id in old2new_mapping
+                                prompt_tokens.append({
+                                    'text': decoded_text,
+                                    'original_id': orig_id,
+                                    'mapped_id': mapped_id,
+                                    'in_vocab': in_vocab
+                                })
+                        else:
+                            # Character level tokenization
+                            stoi = meta.get('stoi', {})
+                            prompt_tokens = []
+                            for ch in prompt_:
+                                in_vocab = ch in stoi
+                                prompt_tokens.append({
+                                    'text': ch,
+                                    'original_id': stoi.get(ch, -1),
+                                    'mapped_id': stoi.get(ch, -1),
+                                    'in_vocab': in_vocab
+                                })
+                except Exception as e:
+                    print(f"Warning: Failed to tokenize prompt for display: {e}")
+                    prompt_tokens = None
+                
+                # Use cached inference function with detailed info enabled
                 gen = cached_generate_text(
                     data_dir=data_dir_inf_, out_dir=out_dir_inf_,
                     prompt=prompt_,
@@ -1425,45 +1646,163 @@ def build_app_interface(selected_lang: str = "zh"):
                     temperature=temperature_float,
                     top_k=top_k_int,
                     seed=seed_inf_int,
-                    device=device_inf_,  # Use user-selected device
+                    device=device_inf_,
                     dtype=dtype_inf_,
                     compile_model=DEFAULT_CONFIG["inference"]["compile_model"],
-                    auto_clear_cache=False  # Disable auto cleanup, use unified management instead
+                    auto_clear_cache=False,
+                    return_detailed_info=True  # Enable detailed token info
                 )
                 
-                # Batch process output to improve UI responsiveness
-                text_buffer = ""
-                buffer_threshold = 3  # Batch output every 3 characters
+                # Collect token info for highlighting and advanced output
+                current_sample_tokens = []
+                all_samples_info = []
+                all_token_details = []
+                current_sample_idx = 0
+                prompt_displayed = False
+                full_text_output = ""
                 
-                for piece in gen:
-                    text_buffer += piece
-                    if len(text_buffer) >= buffer_threshold:
-                        output_stream_text += text_buffer
-                        yield output_stream_text
-                        text_buffer = ""
+                for item in gen:
+                    text_piece, token_detail = item
+                    
+                    # Check for sample header
+                    if text_piece.startswith("Sample ") and text_piece.endswith(":\n"):
+                        # Save previous sample if exists
+                        if current_sample_tokens:
+                            all_samples_info.append({
+                                'sample_idx': current_sample_idx - 1,
+                                'prompt': prompt_,
+                                'tokens': current_sample_tokens.copy()
+                            })
+                        current_sample_tokens = []
+                        prompt_displayed = False
+                        current_sample_idx = int(text_piece.replace("Sample ", "").replace(":\n", ""))
+                        full_text_output += text_piece
+                    elif text_piece == prompt_ and not prompt_displayed:
+                        # This is the prompt
+                        prompt_displayed = True
+                        full_text_output += text_piece
+                    elif text_piece.startswith("\n" + "-" * 30):
+                        # Separator between samples
+                        if current_sample_tokens:
+                            all_samples_info.append({
+                                'sample_idx': current_sample_idx - 1,
+                                'prompt': prompt_,
+                                'tokens': current_sample_tokens.copy()
+                            })
+                        current_sample_tokens = []
+                        full_text_output += text_piece
+                    else:
+                        # Generated token
+                        current_sample_tokens.append({
+                            'text': text_piece,
+                            'token_detail': token_detail
+                        })
+                        if token_detail:
+                            all_token_details.append({
+                                'sample_index': current_sample_idx - 1,
+                                'token_details': [token_detail]
+                            })
+                        full_text_output += text_piece
+                    
+                    # Generate HTML outputs
+                    # Main output with token highlighting
+                    main_html_parts = []
+                    main_html_parts.append('<div style="font-family: system-ui, sans-serif;">')
+                    
+                    # Show all completed samples
+                    for sample_info in all_samples_info:
+                        main_html_parts.append(f'<div style="margin-bottom: 15px;"><strong>Sample {sample_info["sample_idx"] + 1}:</strong><br>')
+                        main_html_parts.append(_generate_token_html(sample_info['tokens'], prompt_tokens=prompt_tokens))
+                        main_html_parts.append('</div>')
+                    
+                    # Show current sample in progress
+                    if current_sample_tokens or prompt_displayed:
+                        main_html_parts.append(f'<div style="margin-bottom: 15px;"><strong>Sample {current_sample_idx}:</strong><br>')
+                        main_html_parts.append(_generate_token_html(current_sample_tokens, prompt_tokens=prompt_tokens if prompt_displayed else None))
+                        main_html_parts.append('</div>')
+                    
+                    main_html_parts.append('</div>')
+                    main_html = "".join(main_html_parts)
+                    
+                    # Advanced output - consolidate token details by sample
+                    consolidated_details = {}
+                    for td in all_token_details:
+                        s_idx = td['sample_index']
+                        if s_idx not in consolidated_details:
+                            consolidated_details[s_idx] = {'sample_index': s_idx, 'token_details': []}
+                        consolidated_details[s_idx]['token_details'].extend(td['token_details'])
+                    
+                    advanced_html = _generate_advanced_html(list(consolidated_details.values()))
+                    
+                    yield main_html, advanced_html
                 
-                # Output remaining content
-                if text_buffer:
-                    output_stream_text += text_buffer
-                    yield output_stream_text
+                # Final update - add the last sample
+                if current_sample_tokens:
+                    all_samples_info.append({
+                        'sample_idx': current_sample_idx - 1,
+                        'prompt': prompt_,
+                        'tokens': current_sample_tokens.copy()
+                    })
+                
+                # Final HTML output
+                main_html_parts = []
+                main_html_parts.append('<div style="font-family: system-ui, sans-serif;">')
+                for sample_info in all_samples_info:
+                    main_html_parts.append(f'<div style="margin-bottom: 15px;"><strong>Sample {sample_info["sample_idx"] + 1}:</strong><br>')
+                    main_html_parts.append(_generate_token_html(sample_info['tokens'], prompt_tokens=prompt_tokens))
+                    main_html_parts.append('</div>')
+                main_html_parts.append('</div>')
+                main_html = "".join(main_html_parts)
+                
+                consolidated_details = {}
+                for td in all_token_details:
+                    s_idx = td['sample_index']
+                    if s_idx not in consolidated_details:
+                        consolidated_details[s_idx] = {'sample_index': s_idx, 'token_details': []}
+                    consolidated_details[s_idx]['token_details'].extend(td['token_details'])
+                
+                advanced_html = _generate_advanced_html(list(consolidated_details.values()))
+                
+                # Save HTML formatted output to database for persistence across page reloads
+                try:
+                    ckpt_dir = out_dir_inf_ if out_dir_inf_.endswith('.pt') else os.path.join(out_dir_inf_, 'ckpt.pt')
+                    model_dir_for_db = os.path.dirname(ckpt_dir)
+                    model_id = dbm.get_model_id_by_dir(model_dir_for_db)
+                    if model_id:
+                        # Generate plain text content for backward compatibility
+                        plain_text_parts = []
+                        for sample_info in all_samples_info:
+                            sample_text = f"Sample {sample_info['sample_idx'] + 1}:\n"
+                            sample_text += prompt_
+                            sample_text += "".join([t.get('text', '') for t in sample_info['tokens']])
+                            plain_text_parts.append(sample_text)
+                        plain_text = "\n\n".join(plain_text_parts)
+                        
+                        dbm.save_inference_history(model_id, plain_text, main_html, advanced_html)
+                        print(f"💾 Inference history saved to database (model_id={model_id})")
+                except Exception as save_err:
+                    print(f"Warning: Failed to save inference history to database: {save_err}")
+                
+                yield main_html, advanced_html
                 
                 print("✅ Single model inference completed successfully")
             
             except UnknownTokenError as e:
-                # Handle unknown token errors - display user-friendly error message
-                error_msg = f"❌ Error: {str(e)}\n\nInference aborted. Please ensure your prompt only contains characters/tokens present in the training vocabulary."
-                print(f"❌ Unknown token error: {error_msg}")
-                yield error_msg
+                error_msg = f"❌ Error: {str(e)}<br><br>Inference aborted. Please ensure your prompt only contains characters/tokens present in the training vocabulary."
+                print(f"❌ Unknown token error: {e}")
+                error_html = f'<div style="color: red; padding: 10px; background: #ffe6e6; border-radius: 8px;">{error_msg}</div>'
+                yield error_html, ""
                     
             except Exception as e:
                 import traceback
                 error_msg = f"Error during inference: {str(e)}"
                 print(f"❌ Single inference error: {error_msg}")
                 print(traceback.format_exc())
-                yield error_msg
+                error_html = f'<div style="color: red; padding: 10px; background: #ffe6e6; border-radius: 8px;">{_escape_html(error_msg)}</div>'
+                yield error_html, ""
                 
             finally:
-                # Unified cache cleanup - ensure resources are released after single inference
+                # Unified cache cleanup
                 try:
                     if cache is None:
                         cache = ModelCache()
@@ -1477,7 +1816,7 @@ def build_app_interface(selected_lang: str = "zh"):
             inputs=[data_dir_inf, out_dir_inf, prompt_box,
                     num_samples_box, max_new_tokens_box,
                     temperature_box, top_k_box, dtype_box_inf, device_box_inf, seed_box_inf],
-            outputs=inf_output
+            outputs=[inf_output, inf_advanced_output]
         )
 
         # ------------------------------------------------------------------
@@ -1552,7 +1891,11 @@ def build_app_interface(selected_lang: str = "zh"):
                 _d(d_inf["device"]), # device_box_inf
                 _d(d_inf["seed"]), # seed_box_inf
                 gr.update(), # inf_btn
-                ""                 # inf_output
+                "",                 # inf_output
+                "",                 # inf_advanced_output
+                gr.update(value=[]),  # chatbot - reset to empty chat history
+                gr.update(value=DEFAULT_CONFIG["sft"]["system_prompt"]),  # inf_system_prompt - reset to default
+                "",  # chat_advanced_output - reset to empty
             ]
             
             # 对比页面组件的重置
@@ -1655,7 +1998,27 @@ def build_app_interface(selected_lang: str = "zh"):
             d_train_defaults = DEFAULT_CONFIG["training"]
             d_inf_defaults = DEFAULT_CONFIG["inference"]
 
-            inference_history = dbm.get_inference_history(mid) or ""
+            # Get full inference history including HTML formatted output
+            inference_history_data = dbm.get_inference_history_full(mid)
+            # Prefer HTML content if available, otherwise fall back to plain text wrapped in basic HTML
+            if inference_history_data.get('html_content'):
+                inference_history_html = inference_history_data['html_content']
+            elif inference_history_data.get('content'):
+                # Wrap plain text in basic HTML formatting for display
+                plain_text = inference_history_data['content']
+                escaped_text = plain_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+                inference_history_html = f'<div style="font-family: monospace; white-space: pre-wrap; line-height: 1.6; padding: 10px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e0e0e0;">{escaped_text}</div>'
+            else:
+                inference_history_html = ""
+            
+            # Get chat history for chat mode (now returns dict with history, advanced_html, system_prompt)
+            chat_history_data = dbm.get_chat_history(mid)
+            chat_history = chat_history_data.get('history', [])
+            chat_advanced_html_saved = chat_history_data.get('advanced_html', '')
+            chat_system_prompt_saved = chat_history_data.get('system_prompt', '')
+            
+            # Get advanced HTML if available
+            inference_advanced_html = inference_history_data.get('advanced_html', '')
             
             # 获取模型的学习率调度器类型
             scheduler_type = _cfg("lr_scheduler_type", d_train_defaults["lr_scheduler_type"])
@@ -1739,7 +2102,12 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(value=_ic("device", d_inf_defaults["device"])), # device_box_inf
                 gr.update(value=_ic("seed", d_inf_defaults["seed"])), # seed_box_inf
                 gr.update(), # inf_btn (添加缺失的组件)
-                inference_history # inf_output
+                inference_history_html, # inf_output (HTML formatted)
+                inference_advanced_html, # inf_advanced_output (advanced token info)
+                # Chat mode components
+                gr.update(value=chat_history),  # chatbot - load saved chat history
+                gr.update(value=chat_system_prompt_saved if chat_system_prompt_saved is not None else ''),  # inf_system_prompt - load saved system prompt (empty string is valid)
+                chat_advanced_html_saved,  # chat_advanced_output - load saved advanced HTML
             ]
             
             # 对比页面组件更新，但不直接更新左右模型选择框，自选
@@ -1806,7 +2174,9 @@ def build_app_interface(selected_lang: str = "zh"):
             data_dir_inf, out_dir_inf,
             prompt_box, num_samples_box, max_new_tokens_box,
             temperature_box, top_k_box, dtype_box_inf, device_box_inf, seed_box_inf,
-            inf_btn, inf_output,
+            inf_btn, inf_output, inf_advanced_output,
+            # Chat mode - add chatbot, system_prompt and advanced_output for loading saved data
+            chatbot, inf_system_prompt, chat_advanced_output,
             # 添加对比页面组件
             comp_left_model, comp_right_model,
             comp_left_params, comp_right_params,
@@ -1911,6 +2281,17 @@ def build_app_interface(selected_lang: str = "zh"):
                 gr.update(label=Tn["inf_top_k"]), gr.update(label=Tn["inf_dtype"]), 
                 gr.update(label=Tn["inf_device"]), gr.update(label=Tn["inf_seed"]), # seed_box_inf label
                 gr.update(value=Tn["inf_start_btn"]), gr.update(label=Tn["inf_result"]),
+                gr.update(label=Tn["inf_advanced_output"]),  # inf_advanced_output
+                gr.update(label=Tn["inf_advanced_output"]),  # advanced_accordion
+                # Chat mode components
+                gr.update(label=Tn["inf_chat_mode"]),  # inf_chat_mode
+                gr.update(label=Tn["inf_chat_history"]),  # chatbot
+                gr.update(label=Tn["inf_system_prompt"]),  # inf_system_prompt
+                gr.update(label=Tn["inf_user_input"]),  # inf_user_input
+                gr.update(value=Tn["inf_send_btn"]),  # inf_send_btn
+                gr.update(value=Tn["inf_clear_chat"]),  # inf_clear_btn
+                gr.update(label=Tn["inf_chat_advanced"]),  # chat_advanced_accordion
+                gr.update(label=Tn["inf_advanced_output"]),  # chat_advanced_output
                 # Comparison tab
                 gr.update(label=Tn["compare_left_model"]), gr.update(label=Tn["compare_right_model"]),
                 gr.update(label=Tn["compare_model_params"]), gr.update(label=Tn["compare_model_params"]),
@@ -1969,7 +2350,11 @@ def build_app_interface(selected_lang: str = "zh"):
             data_dir_inf, out_dir_inf, prompt_box,
             num_samples_box, max_new_tokens_box, temperature_box, top_k_box,
             dtype_box_inf, device_box_inf, seed_box_inf,
-            inf_btn, inf_output,
+            inf_btn, inf_output, inf_advanced_output, advanced_accordion,
+            # Chat mode components
+            inf_chat_mode, chatbot, inf_system_prompt, inf_user_input, 
+            inf_send_btn, inf_clear_btn, chat_advanced_accordion,
+            chat_advanced_output,
             # Comparison tab components
             comp_left_model, comp_right_model,
             comp_left_params, comp_right_params,
@@ -2592,26 +2977,170 @@ def build_app_interface(selected_lang: str = "zh"):
         # Chat Callbacks
         # ------------------------------------------------------------------
         
+        # Helper functions for chat token display
+        def _generate_user_tokenization_html(tokens_info):
+            """Generate HTML to display user input tokenization - inline with message"""
+            if not tokens_info:
+                return ""
+            
+            html_parts = []
+            html_parts.append('<div style="display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #ccc;">')
+            html_parts.append('<span style="font-size: 11px; color: #666; margin-right: 4px;">📝 Tokens:</span>')
+            
+            for i, token_info in enumerate(tokens_info):
+                text = _escape_html(token_info['text'])
+                orig_id = token_info['original_id']
+                mapped_id = token_info['mapped_id']
+                in_vocab = token_info['in_vocab']
+                
+                color = TOKEN_COLORS[i % len(TOKEN_COLORS)]
+                border_color = "#4caf50" if in_vocab else "#f44336"
+                border_style = "1px solid " + border_color
+                
+                tooltip = f"Token #{i+1}&#10;Text: '{text}'&#10;Original ID: {orig_id}&#10;Mapped ID: {mapped_id}&#10;In Vocab: {'Yes' if in_vocab else 'No'}"
+                
+                html_parts.append(f'''<span style="background-color: {color}; padding: 1px 4px; border-radius: 3px; 
+                    border: {border_style}; cursor: help; font-size: 11px;" title="{tooltip}">{text}</span>''')
+            
+            html_parts.append('</div>')
+            return "".join(html_parts)
+        
+        def _generate_response_html_with_tokens(response_tokens):
+            """Generate HTML for response text with token highlighting"""
+            if not response_tokens:
+                return ""
+            
+            html_parts = []
+            for i, token_info in enumerate(response_tokens):
+                text = _escape_html(token_info['text'])
+                color = TOKEN_COLORS[i % len(TOKEN_COLORS)]
+                detail = token_info.get('token_detail')
+                
+                if detail:
+                    candidates = detail.get('top5_candidates', [])
+                    tooltip_parts = [f"#{detail.get('position', i)+1}: '{text}'"]
+                    for j, cand in enumerate(candidates[:5]):
+                        prob_pct = cand['probability'] * 100
+                        cand_text = _escape_html(cand['text'])
+                        marker = "→" if cand['token_id'] == detail.get('selected_token_id') else " "
+                        tooltip_parts.append(f"{marker}{j+1}. '{cand_text}' ({prob_pct:.1f}%)")
+                    tooltip = "&#10;".join(tooltip_parts)
+                else:
+                    tooltip = f"Token: {text}"
+                
+                html_parts.append(f'''<span style="background-color: {color}; padding: 0px 2px; border-radius: 2px; 
+                    cursor: help;" title="{tooltip}">{text}</span>''')
+            
+            return "".join(html_parts)
+        
+        def _generate_chat_advanced_html(all_token_details, response_tokens, system_prompt_tokens=None):
+            """Generate detailed HTML for chat advanced output panel - matching non-chat mode styling"""
+            html_parts = []
+            html_parts.append('<div style="font-family: system-ui, -apple-system, sans-serif; font-size: 13px;">')
+            
+            # System prompt tokenization section (only shown once per conversation start or when provided)
+            if system_prompt_tokens:
+                html_parts.append('<div style="margin: 16px 0 10px 0; padding: 6px 16px; background: #fff3e0; color: #e65100; border-radius: 20px; font-weight: 600; display: inline-block; font-size: 13px; border: 1px solid #ffe0b2;">System Prompt Tokens</div>')
+                html_parts.append('<div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 16px; padding: 12px; background: #fffbf5; border: 1px solid #ffe0b2; border-radius: 8px;">')
+                for i, token_info in enumerate(system_prompt_tokens):
+                    text = _escape_html(token_info['text'])
+                    orig_id = token_info['original_id']
+                    mapped_id = token_info['mapped_id']
+                    in_vocab = token_info['in_vocab']
+                    color = TOKEN_COLORS[i % len(TOKEN_COLORS)]
+                    border_color = "#4caf50" if in_vocab else "#f44336"
+                    tooltip = f"Token #{i+1}&#10;Text: '{text}'&#10;Original ID: {orig_id}&#10;Mapped ID: {mapped_id}&#10;In Vocab: {'Yes' if in_vocab else 'No'}"
+                    html_parts.append(f'''<span style="background-color: {color}; padding: 2px 6px; border-radius: 4px; border: 1px solid {border_color}; cursor: help; font-size: 12px;" title="{tooltip}">{text}</span>''')
+                html_parts.append('</div>')
+            
+            if not all_token_details:
+                html_parts.append('</div>')
+                return "".join(html_parts)
+            
+            # Response header - 淡雅的青色 (matching non-chat mode)
+            html_parts.append('<div style="margin: 16px 0 10px 0; padding: 6px 16px; background: #e0f7fa; color: #006064; border-radius: 20px; font-weight: 600; display: inline-block; font-size: 13px; border: 1px solid #b2ebf2;">Response Token Details</div>')
+            
+            # Table with inline styles (matching non-chat mode)
+            html_parts.append('<div style="max-height: 500px; overflow-y: auto; margin-bottom: 24px; border: 1px solid #f0f0f0; border-radius: 8px;">')
+            html_parts.append('<table style="width: 100%; border-collapse: collapse; font-size: 13px; background: white;">')
+            
+            # Header - 清新淡灰背景，深灰文字
+            html_parts.append('<thead><tr style="background: #f8f9fa; border-bottom: 1px solid #e9ecef;">')
+            html_parts.append('<th style="padding: 12px 16px; text-align: center; color: #5f6368; font-weight: 600; width: 60px;">#</th>')
+            html_parts.append('<th style="padding: 12px 16px; text-align: left; color: #5f6368; font-weight: 600; width: 140px;">Selected</th>')
+            html_parts.append('<th style="padding: 12px 16px; text-align: left; color: #5f6368; font-weight: 600;">Top 5 Candidates</th>')
+            html_parts.append('</tr></thead><tbody>')
+            
+            for row_idx, detail in enumerate(all_token_details):
+                pos = detail.get('position', 0)
+                selected_text = _escape_html(detail.get('selected_token_text', ''))
+                selected_id = detail.get('selected_token_id', -1)
+                candidates = detail.get('top5_candidates', [])
+                
+                # Find selected probability
+                selected_prob = 0
+                non_selected_candidates = []
+                for cand in candidates:
+                    is_selected = cand.get('is_selected', False) or cand['token_id'] == selected_id
+                    if is_selected:
+                        selected_prob = cand['probability'] * 100
+                    else:
+                        non_selected_candidates.append(cand)
+                
+                # Only show first 5 non-selected candidates with capsule style
+                cand_html_parts = []
+                for idx, cand in enumerate(non_selected_candidates[:5]):
+                    prob_pct = cand['probability'] * 100
+                    cand_text = _escape_html(cand['text'])
+                    # Capsule style with shadow - 清新白底胶囊
+                    cand_html_parts.append(
+                        f'<span style="display: inline-block; margin: 3px 6px 3px 0; padding: 4px 10px; '
+                        f'background: #ffffff; color: #555; '
+                        f'border-radius: 12px; font-size: 12px; white-space: nowrap; '
+                        f'box-shadow: 0 1px 2px rgba(0,0,0,0.08); border: 1px solid #ebebeb;">'
+                        f'<span style="color: #bbb; font-size: 10px; margin-right: 4px;">#{idx+1}</span>'
+                        f'{cand_text} <span style="color: #999; font-size: 11px;">({prob_pct:.1f}%)</span></span>'
+                    )
+                
+                candidates_html = "".join(cand_html_parts) if cand_html_parts else '<span style="color: #ccc;">-</span>'
+                
+                # Row background alternation - 极其淡的条纹
+                row_bg = "#fbfbfb" if row_idx % 2 == 1 else "white"
+                
+                html_parts.append(f'<tr style="background: {row_bg}; border-bottom: 1px solid #f5f5f5;">')
+                html_parts.append(f'<td style="padding: 10px 16px; text-align: center; color: #9aa0a6; font-size: 12px;">{pos + 1}</td>')
+                
+                # Selected cell - 清新淡绿高亮块
+                html_parts.append(f'<td style="padding: 10px 16px;"><span style="background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; border-radius: 6px; padding: 4px 8px; display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 500;">{selected_text} <span style="opacity: 0.7; font-size: 11px; margin-left: 2px;">{selected_prob:.1f}%</span></span></td>')
+                html_parts.append(f'<td style="padding: 10px 16px; line-height: 1.6;">{candidates_html}</td>')
+                html_parts.append('</tr>')
+            
+            html_parts.append('</tbody></table></div>')
+            html_parts.append('</div>')
+            return "".join(html_parts)
+        
         def chat_cb(user_msg, history, model_sel, sys_prompt, max_tokens, temp, top_k, seed, device_val):
-            if not user_msg:
-                return "", history
+            if not user_msg or not user_msg.strip():
+                # Show error for empty message
+                gr.Warning("⚠️ Please enter a message.")
+                return "", history or [], ""
             
             # Update history with user message
             history = history or []
             history.append((user_msg, None))
-            yield "", history
+            yield "", history, ""
             
             # Validate model
             if not model_sel or " - " not in model_sel:
                 history[-1] = (user_msg, "❌ Please select a model first.")
-                yield "", history
+                yield "", history, ""
                 return
 
             model_id = int(model_sel.split(" - ")[0])
             model_info = dbm.get_model(model_id)
             if not model_info:
                 history[-1] = (user_msg, "❌ Model not found.")
-                yield "", history
+                yield "", history, ""
                 return
             
             # Load model (using cache if possible - reuse inference cache logic or simplified)
@@ -2629,7 +3158,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 tokenizer_path = Path.cwd() / "assets" / "tokenizer.json"
                 if not tokenizer_path.exists():
                      history[-1] = (user_msg, "❌ tokenizer.json not found.")
-                     yield "", history
+                     yield "", history, "", ""
                      return
                 
                 from tokenizers import Tokenizer
@@ -2653,8 +3182,28 @@ def build_app_interface(selected_lang: str = "zh"):
                 
                 if old2new_mapping is None:
                     history[-1] = (user_msg, f"❌ Error: Token ID mapping not found. meta_path={meta_path}, exists={os.path.exists(meta_path) if meta_path else False}. Please ensure the model was trained with the custom tokenizer.")
-                    yield "", history
+                    yield "", history, "", ""
                     return
+                
+                # Load saved token IDs from database (if available) to avoid re-tokenization issues
+                chat_history_data = dbm.get_chat_history(model_id)
+                saved_token_ids = chat_history_data.get('token_ids', [])
+                
+                # Build history_token_ids from saved data
+                # This contains all previous conversation context in token form
+                history_token_ids = None
+                if saved_token_ids:
+                    # Use the last saved all_token_ids as the history context
+                    # This preserves exact token boundaries
+                    if saved_token_ids and 'all_token_ids' in saved_token_ids[-1]:
+                        history_token_ids = saved_token_ids[-1]['all_token_ids']
+                
+                # Tokenize user input for display
+                user_tokens_info = tokenize_user_input(tokenizer, user_msg, old2new_mapping)
+                user_tokenization_html = _generate_user_tokenization_html(user_tokens_info)
+                
+                # Tokenize system prompt for display (only for first message or when changed)
+                system_prompt_tokens = tokenize_user_input(tokenizer, sys_prompt, old2new_mapping) if sys_prompt else []
                 
                 # Load model
                 checkpoint = torch.load(load_path, map_location=device_val)
@@ -2681,17 +3230,37 @@ def build_app_interface(selected_lang: str = "zh"):
                 model.to(device_val)
                 model.eval()
                 
-                # Prepare messages from history
+                # Prepare messages from history - extract plain text for model
                 messages = []
-                for user_text, bot_text in history[:-1]: # Skip last pending
-                    messages.append({"role": "user", "content": user_text})
-                    if bot_text:
-                        messages.append({"role": "assistant", "content": bot_text})
+                for user_entry, bot_entry in history[:-1]: # Skip last pending
+                    # User entry might be HTML with tokenization, extract plain text
+                    if isinstance(user_entry, str):
+                        # Remove HTML tags if present to get plain text for model
+                        import re
+                        plain_user = re.sub(r'<[^>]+>', '', user_entry)
+                        # Also remove the "📝 Tokens:" prefix if present
+                        plain_user = re.sub(r'📝 Tokens:.*', '', plain_user, flags=re.DOTALL).strip()
+                    else:
+                        plain_user = str(user_entry)
+                    
+                    messages.append({"role": "user", "content": plain_user})
+                    if bot_entry:
+                        # Bot entry might also be HTML with token colors
+                        if isinstance(bot_entry, str):
+                            plain_bot = re.sub(r'<[^>]+>', '', bot_entry)
+                        else:
+                            plain_bot = str(bot_entry)
+                        messages.append({"role": "assistant", "content": plain_bot})
                 
                 messages.append({"role": "user", "content": user_msg})
                 
-                # Generate with proper token ID mappings
-                # Note: device is automatically inferred from model parameters
+                # Set random seed for reproducibility
+                torch.manual_seed(int(seed))
+                if 'cuda' in device_val:
+                    torch.cuda.manual_seed(int(seed))
+                
+                # Generate with proper token ID mappings and detailed info
+                # Pass history_token_ids to avoid re-tokenization of conversation history
                 generator = chat_generate(
                     model=model,
                     tokenizer=tokenizer,
@@ -2701,38 +3270,88 @@ def build_app_interface(selected_lang: str = "zh"):
                     temperature=temp,
                     top_k=int(top_k),
                     old2new_mapping=old2new_mapping,
-                    new2old_mapping=new2old_mapping
+                    new2old_mapping=new2old_mapping,
+                    return_detailed_info=True,  # Enable detailed token info
+                    history_token_ids=history_token_ids  # Use saved token IDs to avoid re-tokenization
                 )
                 
-                partial_response = ""
-                for token in generator:
-                    partial_response += token
-                    history[-1] = (user_msg, partial_response)
-                    yield "", history
+                all_token_details = []
+                response_tokens = []
+                final_token_data = None  # Will store the final token IDs for saving
+                
+                # Create user message HTML with tokenization
+                user_msg_html = f'<div style="font-family: system-ui, sans-serif;">{_escape_html(user_msg)}{user_tokenization_html}</div>'
+                
+                for item in generator:
+                    text_piece, token_detail = item
+                    
+                    # Check if this is the final message with token IDs
+                    if token_detail and token_detail.get('is_final'):
+                        final_token_data = token_detail
+                        continue
+                    
+                    # Skip empty text pieces (shouldn't happen but just in case)
+                    if not text_piece:
+                        continue
+                    
+                    # Collect token info
+                    response_tokens.append({
+                        'text': text_piece,
+                        'token_detail': token_detail
+                    })
+                    if token_detail:
+                        all_token_details.append(token_detail)
+                    
+                    # Generate response HTML with token highlighting
+                    response_html = f'<div style="font-family: system-ui, sans-serif;">{_generate_response_html_with_tokens(response_tokens)}</div>'
+                    
+                    history[-1] = (user_msg_html, response_html)
+                    
+                    # Generate advanced HTML (include system prompt tokens only for first turn)
+                    show_sys_tokens = system_prompt_tokens if len(history) == 1 else None
+                    advanced_html = _generate_chat_advanced_html(all_token_details, response_tokens, show_sys_tokens)
+                    
+                    yield "", history, advanced_html
+                
+                # Final update
+                response_html = f'<div style="font-family: system-ui, sans-serif;">{_generate_response_html_with_tokens(response_tokens)}</div>'
+                history[-1] = (user_msg_html, response_html)
+                show_sys_tokens = system_prompt_tokens if len(history) == 1 else None
+                advanced_html = _generate_chat_advanced_html(all_token_details, response_tokens, show_sys_tokens)
+                
+                # Update saved token IDs with the new conversation turn
+                if final_token_data:
+                    saved_token_ids.append({
+                        'all_token_ids': final_token_data.get('all_token_ids', []),
+                        'generated_token_ids': final_token_data.get('generated_token_ids', []),
+                        'prompt_length': final_token_data.get('prompt_length', 0)
+                    })
+                
+                # Save chat history to database for persistence (including token_ids)
+                try:
+                    dbm.save_chat_history(model_id, history, advanced_html, sys_prompt, saved_token_ids)
+                    print(f"💾 Chat history saved to database (model_id={model_id}, token_ids={len(saved_token_ids)} turns)")
+                except Exception as save_err:
+                    print(f"Warning: Failed to save chat history to database: {save_err}")
+                
+                yield "", history, advanced_html
                     
             except Exception as e:
                 import traceback
                 error_detail = traceback.format_exc()
                 print(f"Chat error: {error_detail}")
                 history[-1] = (user_msg, f"❌ Error: {str(e)}")
-                yield "", history
+                yield "", history, f'<div style="color: red;">Error: {_escape_html(str(e))}</div>'
 
         inf_send_btn.click(
             fn=chat_cb,
             inputs=[
                 inf_user_input, chatbot,
-                # In inference tab, the model dropdown is actually... wait, 
-                # looking at UI, currently inference tab doesn't have its own model dropdown,
-                # it uses selected_model_id from global or previous tabs?
-                # Ah, existing UI design is a bit disconnected.
-                # Let's check where `inf_start_btn` gets model from.
-                # It uses `model_dropdown` from the sidebar I assume?
-                # Yes, `model_dropdown` is defined at start.
                 model_dropdown, 
                 inf_system_prompt,
                 max_new_tokens_box, temperature_box, top_k_box, seed_box_inf, device_box_inf
             ],
-            outputs=[inf_user_input, chatbot]
+            outputs=[inf_user_input, chatbot, chat_advanced_output]
         )
         
         inf_user_input.submit(
@@ -2743,13 +3362,21 @@ def build_app_interface(selected_lang: str = "zh"):
                 inf_system_prompt,
                 max_new_tokens_box, temperature_box, top_k_box, seed_box_inf, device_box_inf
             ],
-            outputs=[inf_user_input, chatbot]
+            outputs=[inf_user_input, chatbot, chat_advanced_output]
         )
         
-        def clear_chat():
-            return []
+        def clear_chat(model_sel):
+            # Clear chat history from database if a model is selected
+            if model_sel and " - " in model_sel:
+                try:
+                    model_id = int(model_sel.split(" - ")[0])
+                    dbm.clear_chat_history(model_id)
+                    print(f"🗑️ Chat history cleared for model_id={model_id}")
+                except Exception as e:
+                    print(f"Warning: Failed to clear chat history from database: {e}")
+            return [], ""
             
-        inf_clear_btn.click(fn=clear_chat, inputs=[], outputs=[chatbot])
+        inf_clear_btn.click(fn=clear_chat, inputs=[model_dropdown], outputs=[chatbot, chat_advanced_output])
 
     return demo
 

@@ -836,7 +836,9 @@ def chat_generate(
     temperature: float = 0.7,
     top_k: int = 50,
     old2new_mapping: Dict[int, int] = None,
-    new2old_mapping: Dict[int, int] = None
+    new2old_mapping: Dict[int, int] = None,
+    return_detailed_info: bool = False,
+    history_token_ids: List[int] = None
 ) -> Generator[str, None, None]:
     """
     Generate chat response using Qwen template.
@@ -851,8 +853,16 @@ def chat_generate(
         top_k: Top-k sampling parameter (0 means no top-k filtering)
         old2new_mapping: Mapping from original token IDs to remapped IDs (for encoding)
         new2old_mapping: Mapping from remapped IDs back to original IDs (for decoding)
+        return_detailed_info: If True, yields tuples of (text, token_detail) with top-5 candidates
+        history_token_ids: Pre-computed token IDs from previous conversation turns (in model's vocabulary).
+                          If provided, only the last user message is tokenized; history uses these IDs directly.
+                          This avoids re-tokenization issues where tokenizer might merge tokens differently.
     
-    Yields tokens as they are generated.
+    Yields tokens as they are generated. If return_detailed_info is True, yields
+    tuples of (text, token_detail) where token_detail contains top-5 candidates.
+    
+    After generation completes, if return_detailed_info is True, the final yield includes
+    'generated_token_ids' in token_detail for saving to database.
     """
     # Get device from model parameters to avoid device mismatch
     # This ensures tensors are created on the same device as the model
@@ -874,32 +884,117 @@ def chat_generate(
     elif top_k > vocab_size:
         top_k = vocab_size  # Clamp to vocab size
     
-    # Format conversation
-    prompt = format_chat_for_inference(messages, system_prompt)
-    
-    # Tokenize (original token IDs from tokenizer)
-    original_ids = tokenizer.encode(prompt).ids
-    
-    # Remap to model's token IDs if mapping is provided
-    if old2new_mapping is not None:
-        input_ids = []
-        for i, orig_id in enumerate(original_ids):
-            if orig_id in old2new_mapping:
-                input_ids.append(old2new_mapping[orig_id])
+    # Greedy tokenization function that handles unknown tokens by finding
+    # the longest valid substrings that can be tokenized within vocabulary
+    def greedy_tokenize_with_fallback(text: str) -> List[int]:
+        """
+        Tokenize text with intelligent fallback for unknown tokens.
+        
+        Strategy:
+        1. First try direct tokenization - if all tokens are in vocab, use them
+        2. For any text segment that produces unknown tokens, use greedy matching:
+           - Priority 1: Find longest substring that tokenizes to a SINGLE known token
+           - Priority 2: Find longest substring that tokenizes to ALL known tokens
+           - This maximizes token granularity (prefers larger tokens)
+        
+        Example: "…………" (4 ellipsis chars) with vocab containing only "……" (2 chars):
+        - Tokenizer would produce [38325] (unknown merged token)
+        - This function splits it into "……" + "……" = [14053, 14053] (both known)
+        """
+        if not text:
+            return []
+        
+        if old2new_mapping is None:
+            return tokenizer.encode(text).ids
+        
+        # First try: direct tokenization
+        original_ids = tokenizer.encode(text).ids
+        if all(tid in old2new_mapping for tid in original_ids):
+            return [old2new_mapping[tid] for tid in original_ids]
+        
+        # Some tokens are unknown - use greedy approach
+        result = []
+        pos = 0
+        text_len = len(text)
+        
+        while pos < text_len:
+            best_end = pos
+            best_ids = None
+            
+            # Strategy 1: Find longest substring that tokenizes to a SINGLE known token
+            # This maximizes token granularity
+            for end in range(text_len, pos, -1):
+                substr = text[pos:end]
+                substr_ids = tokenizer.encode(substr).ids
+                
+                # Only accept if it's a single token AND that token is known
+                if len(substr_ids) == 1 and substr_ids[0] in old2new_mapping:
+                    best_end = end
+                    best_ids = [old2new_mapping[substr_ids[0]]]
+                    break
+            
+            # Strategy 2: If no single-token match, find longest all-known multi-token match
+            if best_ids is None:
+                for end in range(text_len, pos, -1):
+                    substr = text[pos:end]
+                    substr_ids = tokenizer.encode(substr).ids
+                    
+                    if all(tid in old2new_mapping for tid in substr_ids):
+                        best_end = end
+                        best_ids = [old2new_mapping[tid] for tid in substr_ids]
+                        break
+            
+            if best_ids is not None:
+                result.extend(best_ids)
+                pos = best_end
             else:
-                # Unknown token - raise error instead of silent fallback
-                # Decoding the problematic token for better error message
-                try:
-                    problematic_token = tokenizer.decode([orig_id])
-                except:
-                    problematic_token = f"<id={orig_id}>"
-                raise ValueError(
-                    f"Unknown token ID {orig_id} ('{problematic_token}') at position {i} is not in model vocabulary. "
-                    f"This token was not seen during training. Please ensure the input uses only characters/tokens "
-                    f"that were present in the training data, or retrain with a dataset that includes this token."
-                )
+                # Even a single character doesn't work - this is a truly unknown character
+                unknown_char = text[pos]
+                char_ids = tokenizer.encode(unknown_char).ids
+                if char_ids and char_ids[0] in old2new_mapping:
+                    result.append(old2new_mapping[char_ids[0]])
+                else:
+                    # Character not in vocabulary at all
+                    raise ValueError(
+                        f"Character '{unknown_char}' at position {pos} cannot be tokenized within model vocabulary."
+                    )
+                pos += 1
+        
+        return result
+    
+    # Helper function to tokenize text and map to model vocabulary
+    def tokenize_and_map(text: str) -> List[int]:
+        """Tokenize text and map to model's token IDs using greedy fallback."""
+        return greedy_tokenize_with_fallback(text)
+    
+    # Build input token IDs
+    # If history_token_ids is provided, use it directly for history (avoids re-tokenization issues)
+    # Only tokenize the new user message and necessary template tokens
+    if history_token_ids is not None and len(history_token_ids) > 0:
+        # history_token_ids contains all previous conversation tokens (already in model's vocabulary)
+        # We just need to add the new user message tokens
+        
+        # Get the last message (should be the new user message)
+        if messages and messages[-1].get('role') == 'user':
+            new_user_content = sanitize_special_tokens(messages[-1].get('content', ''))
+            
+            # Build the new user turn: <|im_start|>user\n{content}<|im_end|>\n<|im_start|>assistant\n
+            new_turn_text = f"{IM_START_TOKEN}user\n{new_user_content}{IM_END_TOKEN}\n{IM_START_TOKEN}assistant\n"
+            new_turn_ids = tokenize_and_map(new_turn_text)
+            
+            # Combine history with new turn
+            input_ids = list(history_token_ids) + new_turn_ids
+        else:
+            # Fallback: tokenize everything
+            prompt = format_chat_for_inference(messages, system_prompt)
+            input_ids = tokenize_and_map(prompt)
     else:
-        input_ids = original_ids
+        # No history token IDs, tokenize the full prompt
+        prompt = format_chat_for_inference(messages, system_prompt)
+        input_ids = tokenize_and_map(prompt)
+    
+    # Track the prompt length to know where generation starts
+    prompt_length = len(input_ids)
     
     idx = torch.tensor([input_ids], dtype=torch.long, device=device)
     
@@ -915,12 +1010,33 @@ def chat_generate(
         eot_id_mapped = EOT_ID
     
     generated_text = ""
+    token_position = 0
+    generated_token_ids = []  # Track all generated token IDs for saving to database
     
     with torch.no_grad():
         for _ in range(max_new_tokens):
             idx_cond = idx[:, -block_size:]
             logits, _ = model(idx_cond)
             logits = logits[:, -1, :] / temperature
+            
+            # Get top 5 candidates before any masking (for detailed info)
+            if return_detailed_info:
+                top5_values, top5_indices = torch.topk(logits, min(5, logits.size(-1)))
+                top5_probs_raw = F.softmax(logits, dim=-1)
+                top5_probs = top5_probs_raw[0, top5_indices[0]].tolist()
+                top5_tokens_mapped = top5_indices[0].tolist()
+                # Decode each candidate token
+                top5_decoded = []
+                for t_idx in top5_tokens_mapped:
+                    try:
+                        if new2old_mapping is not None:
+                            orig_tid = new2old_mapping.get(t_idx, t_idx)
+                        else:
+                            orig_tid = t_idx
+                        decoded_token = tokenizer.decode([orig_tid])
+                        top5_decoded.append(decoded_token)
+                    except:
+                        top5_decoded.append(f"<token_{t_idx}>")
             
             if top_k > 0:
                 v, _ = torch.topk(logits, top_k)
@@ -931,6 +1047,7 @@ def chat_generate(
             idx = torch.cat((idx, idx_next), dim=1)
             
             new_token_id = idx_next[0].item()
+            generated_token_ids.append(new_token_id)  # Track for database
             
             # Check for end token (using remapped IDs)
             if new_token_id == im_end_id_mapped or new_token_id == eot_id_mapped:
@@ -945,6 +1062,139 @@ def chat_generate(
             # Decode new token
             new_text = tokenizer.decode([original_token_id])
             generated_text += new_text
-            yield new_text
+            
+            if return_detailed_info:
+                token_detail = {
+                    'position': token_position,
+                    'selected_token_id': new_token_id,
+                    'selected_token_text': new_text,
+                    'top5_candidates': [
+                        {'token_id': tid, 'text': txt, 'probability': prob}
+                        for tid, txt, prob in zip(top5_tokens_mapped, top5_decoded, top5_probs)
+                    ]
+                }
+                token_position += 1
+                yield (new_text, token_detail)
+            else:
+                yield new_text
+    
+    # After generation, yield a final message with the complete token IDs for saving
+    # This includes all tokens: prompt + generated (for maintaining conversation context)
+    if return_detailed_info:
+        final_token_ids = idx[0].tolist()  # All tokens including prompt and generated
+        yield ("", {
+            'is_final': True,
+            'generated_token_ids': generated_token_ids,  # Only the generated tokens
+            'all_token_ids': final_token_ids,  # Full context including prompt
+            'prompt_length': prompt_length
+        })
     
     return generated_text
+
+
+def tokenize_user_input(tokenizer, text: str, old2new_mapping: Dict[int, int] = None) -> List[Dict]:
+    """
+    Tokenize user input text and return token details for display.
+    Uses greedy tokenization to handle unknown merged tokens.
+    
+    Args:
+        tokenizer: HuggingFace tokenizer
+        text: User input text
+        old2new_mapping: Optional token ID remapping
+        
+    Returns:
+        List of dicts with 'text' and 'token_id' for each token
+    """
+    if not text:
+        return []
+    
+    if old2new_mapping is None:
+        # No mapping, just use direct tokenization
+        original_ids = tokenizer.encode(text).ids
+        tokens_info = []
+        for orig_id in original_ids:
+            try:
+                decoded_text = tokenizer.decode([orig_id])
+            except:
+                decoded_text = f"<token_{orig_id}>"
+            tokens_info.append({
+                'text': decoded_text,
+                'original_id': orig_id,
+                'mapped_id': orig_id,
+                'in_vocab': True
+            })
+        return tokens_info
+    
+    # Use greedy tokenization to properly split unknown tokens
+    # This ensures user input like "…………" is displayed as multiple known tokens
+    tokens_info = []
+    pos = 0
+    text_len = len(text)
+    
+    while pos < text_len:
+        best_end = pos
+        best_token_id = None
+        best_text = None
+        
+        # Strategy 1: Find longest substring that tokenizes to a SINGLE known token
+        for end in range(text_len, pos, -1):
+            substr = text[pos:end]
+            substr_ids = tokenizer.encode(substr).ids
+            
+            if len(substr_ids) == 1 and substr_ids[0] in old2new_mapping:
+                best_end = end
+                best_token_id = substr_ids[0]
+                best_text = substr
+                break
+        
+        # Strategy 2: If no single-token match, try multi-token match
+        if best_token_id is None:
+            for end in range(text_len, pos, -1):
+                substr = text[pos:end]
+                substr_ids = tokenizer.encode(substr).ids
+                
+                if all(tid in old2new_mapping for tid in substr_ids):
+                    # Add all tokens from this match
+                    for tid in substr_ids:
+                        try:
+                            decoded_text = tokenizer.decode([tid])
+                        except:
+                            decoded_text = f"<token_{tid}>"
+                        tokens_info.append({
+                            'text': decoded_text,
+                            'original_id': tid,
+                            'mapped_id': old2new_mapping[tid],
+                            'in_vocab': True
+                        })
+                    pos = end
+                    break
+            else:
+                # Fallback: single character
+                char = text[pos]
+                char_ids = tokenizer.encode(char).ids
+                if char_ids:
+                    orig_id = char_ids[0]
+                    in_vocab = orig_id in old2new_mapping
+                    try:
+                        decoded_text = tokenizer.decode([orig_id])
+                    except:
+                        decoded_text = char
+                    tokens_info.append({
+                        'text': decoded_text,
+                        'original_id': orig_id,
+                        'mapped_id': old2new_mapping.get(orig_id, orig_id),
+                        'in_vocab': in_vocab
+                    })
+                pos += 1
+            continue
+        
+        # Add the single-token match
+        tokens_info.append({
+            'text': best_text,
+            'original_id': best_token_id,
+            'mapped_id': old2new_mapping[best_token_id],
+            'in_vocab': True
+        })
+        pos = best_end
+    
+    return tokens_info

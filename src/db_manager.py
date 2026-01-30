@@ -72,11 +72,75 @@ class DBManager:
             CREATE TABLE IF NOT EXISTS inference_history(
                 model_id INTEGER PRIMARY KEY,
                 content TEXT,
+                html_content TEXT,
+                advanced_html TEXT,
+                FOREIGN KEY(model_id) REFERENCES models(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS chat_history(
+                model_id INTEGER PRIMARY KEY,
+                history_json TEXT,
+                advanced_html TEXT,
+                system_prompt TEXT,
+                token_ids_json TEXT,
                 FOREIGN KEY(model_id) REFERENCES models(id) ON DELETE CASCADE
             );
             """
         )
         self.conn.commit()
+        
+        # Migrate existing tables to add new columns if they don't exist
+        self._migrate_inference_history_table()
+        self._migrate_chat_history_table()
+
+    def _migrate_inference_history_table(self):
+        """
+        Migrates the inference_history table to add html_content and advanced_html columns
+        if they don't already exist. This ensures backward compatibility with existing databases.
+        """
+        cur = self.conn.cursor()
+        try:
+            # Check if columns exist by querying table info
+            cur.execute("PRAGMA table_info(inference_history)")
+            columns = [row[1] for row in cur.fetchall()]
+            
+            if 'html_content' not in columns:
+                cur.execute("ALTER TABLE inference_history ADD COLUMN html_content TEXT")
+                print("Database migrated: added html_content column to inference_history")
+            
+            if 'advanced_html' not in columns:
+                cur.execute("ALTER TABLE inference_history ADD COLUMN advanced_html TEXT")
+                print("Database migrated: added advanced_html column to inference_history")
+            
+            self.conn.commit()
+        except Exception as e:
+            print(f"Warning: Could not migrate inference_history table: {e}")
+
+    def _migrate_chat_history_table(self):
+        """
+        Migrates the chat_history table to add advanced_html, system_prompt, and token_ids_json columns
+        if they don't already exist. This ensures backward compatibility with existing databases.
+        """
+        cur = self.conn.cursor()
+        try:
+            # Check if columns exist by querying table info
+            cur.execute("PRAGMA table_info(chat_history)")
+            columns = [row[1] for row in cur.fetchall()]
+            
+            if 'advanced_html' not in columns:
+                cur.execute("ALTER TABLE chat_history ADD COLUMN advanced_html TEXT")
+                print("Database migrated: added advanced_html column to chat_history")
+            
+            if 'system_prompt' not in columns:
+                cur.execute("ALTER TABLE chat_history ADD COLUMN system_prompt TEXT")
+                print("Database migrated: added system_prompt column to chat_history")
+            
+            if 'token_ids_json' not in columns:
+                cur.execute("ALTER TABLE chat_history ADD COLUMN token_ids_json TEXT")
+                print("Database migrated: added token_ids_json column to chat_history")
+            
+            self.conn.commit()
+        except Exception as e:
+            print(f"Warning: Could not migrate chat_history table: {e}")
 
     # Internal path utilities
     def _rel(self, path: str) -> str:
@@ -318,14 +382,22 @@ class DBManager:
         )
         self.conn.commit()
 
-    def save_inference_history(self, model_id: int, content: str):
-        """Saves or updates the inference history for a model."""
+    def save_inference_history(self, model_id: int, content: str, html_content: str = None, advanced_html: str = None):
+        """
+        Saves or updates the inference history for a model.
+        
+        Args:
+            model_id: The model ID
+            content: Plain text content (for backward compatibility)
+            html_content: HTML formatted output with token highlighting
+            advanced_html: Advanced HTML with detailed token information
+        """
         cur = self.conn.cursor()
         cur.execute(
-            "INSERT INTO inference_history(model_id, content) "
-            "VALUES(?,?) "
-            "ON CONFLICT(model_id) DO UPDATE SET content=excluded.content",
-            (model_id, content)
+            "INSERT INTO inference_history(model_id, content, html_content, advanced_html) "
+            "VALUES(?,?,?,?) "
+            "ON CONFLICT(model_id) DO UPDATE SET content=excluded.content, html_content=excluded.html_content, advanced_html=excluded.advanced_html",
+            (model_id, content, html_content, advanced_html)
         )
         self.conn.commit()
 
@@ -334,6 +406,68 @@ class DBManager:
         Deletes all inference history entries for the specified model.
         """
         self.conn.execute("DELETE FROM inference_history WHERE model_id = ?", (model_id,))
+        self.conn.commit()
+
+    def save_chat_history(self, model_id: int, history: list, advanced_html: str = None, system_prompt: str = None, token_ids: list = None):
+        """
+        Saves or updates the chat history for a model.
+        
+        Args:
+            model_id: The model ID
+            history: List of (user_msg, bot_msg) tuples, can include HTML content
+            advanced_html: Advanced HTML with detailed token information
+            system_prompt: The system prompt used in chat
+            token_ids: List of token ID sequences for each conversation turn
+                       Format: [{"user": [ids], "assistant": [ids]}, ...]
+                       This preserves exact token boundaries to avoid re-tokenization issues.
+        """
+        cur = self.conn.cursor()
+        token_ids_json = json.dumps(token_ids, ensure_ascii=False) if token_ids else None
+        cur.execute(
+            "INSERT INTO chat_history(model_id, history_json, advanced_html, system_prompt, token_ids_json) "
+            "VALUES(?,?,?,?,?) "
+            "ON CONFLICT(model_id) DO UPDATE SET history_json=excluded.history_json, advanced_html=excluded.advanced_html, system_prompt=excluded.system_prompt, token_ids_json=excluded.token_ids_json",
+            (model_id, json.dumps(history, ensure_ascii=False), advanced_html, system_prompt, token_ids_json)
+        )
+        self.conn.commit()
+
+    def get_chat_history(self, model_id: int) -> dict:
+        """
+        Retrieves the full chat history for the specified model.
+        
+        Returns:
+            dict with keys: 'history' (list), 'advanced_html' (str), 'system_prompt' (str), 'token_ids' (list)
+            Returns empty dict with defaults if not found.
+        """
+        cur = self.conn.cursor()
+        cur.execute("SELECT history_json, advanced_html, system_prompt, token_ids_json FROM chat_history WHERE model_id = ?", (model_id,))
+        row = cur.fetchone()
+        if row:
+            history = []
+            if row['history_json']:
+                try:
+                    history = json.loads(row['history_json'])
+                except json.JSONDecodeError:
+                    history = []
+            token_ids = []
+            if row['token_ids_json']:
+                try:
+                    token_ids = json.loads(row['token_ids_json'])
+                except json.JSONDecodeError:
+                    token_ids = []
+            return {
+                'history': history,
+                'advanced_html': row['advanced_html'] or '',
+                'system_prompt': row['system_prompt'] or '',
+                'token_ids': token_ids
+            }
+        return {'history': [], 'advanced_html': '', 'system_prompt': '', 'token_ids': []}
+
+    def clear_chat_history(self, model_id: int):
+        """
+        Deletes the chat history for the specified model.
+        """
+        self.conn.execute("DELETE FROM chat_history WHERE model_id = ?", (model_id,))
         self.conn.commit()
 
     def get_training_config(self, model_id: int) -> Optional[dict]:
@@ -373,6 +507,25 @@ class DBManager:
         cur.execute("SELECT content FROM inference_history WHERE model_id = ?", (model_id,))
         row = cur.fetchone()
         return row["content"] if row else ""
+
+    def get_inference_history_full(self, model_id: int) -> dict:
+        """
+        Retrieves the full inference history for the specified model, including HTML formatted outputs.
+        
+        Returns:
+            dict with keys: 'content' (plain text), 'html_content' (HTML formatted), 'advanced_html' (advanced info)
+            Returns empty dict with empty strings if not found.
+        """
+        cur = self.conn.cursor()
+        cur.execute("SELECT content, html_content, advanced_html FROM inference_history WHERE model_id = ?", (model_id,))
+        row = cur.fetchone()
+        if row:
+            return {
+                'content': row['content'] or '',
+                'html_content': row['html_content'] or '',
+                'advanced_html': row['advanced_html'] or ''
+            }
+        return {'content': '', 'html_content': '', 'advanced_html': ''}
 
     # Delete model (cascades to files and database entries)
     def delete_model(self, model_id: int):

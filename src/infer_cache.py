@@ -477,13 +477,20 @@ def cached_generate_text(
     device=DEFAULT_CONFIG["inference"]["device"],
     dtype=DEFAULT_CONFIG["inference"]["dtype"],
     compile_model=DEFAULT_CONFIG["inference"]["compile_model"],
-    auto_clear_cache=True  # New parameter to control automatic cache cleanup
+    auto_clear_cache=True,  # New parameter to control automatic cache cleanup
+    return_detailed_info=False  # New parameter to return detailed token info
 ):
     """
     Efficient text generation function using cache
+    
+    If return_detailed_info is True, yields tuples of (text_piece, token_details) where
+    token_details is a dict with information about top-k candidate tokens and their probabilities.
     """
     if not prompt.strip():
-        yield "Prompt is empty, please provide a starting text."
+        if return_detailed_info:
+            yield ("Prompt is empty, please provide a starting text.", None)
+        else:
+            yield "Prompt is empty, please provide a starting text."
         return
     
     cache = None
@@ -512,7 +519,11 @@ def cached_generate_text(
         # Prepare checkpoint path
         ckpt_path = out_dir if out_dir.endswith('.pt') else os.path.join(out_dir, 'ckpt.pt')
         if not os.path.exists(ckpt_path):
-            yield f"Error: checkpoint not found at {ckpt_path}."
+            err_msg = f"Error: checkpoint not found at {ckpt_path}."
+            if return_detailed_info:
+                yield (err_msg, None)
+            else:
+                yield err_msg
             return
         
         # Use cache to get model and metadata
@@ -528,31 +539,70 @@ def cached_generate_text(
         xids = torch.tensor(encoded_prompt, dtype=torch.long, device=device)[None, ...]
         block_size = gptconf.block_size
         if xids.size(1) > block_size:
-            yield f"Error: input length ({xids.size(1)}) exceeds block size ({block_size})."
+            err_msg = f"Error: input length ({xids.size(1)}) exceeds block size ({block_size})."
+            if return_detailed_info:
+                yield (err_msg, None)
+            else:
+                yield err_msg
             return
         
         # Generate text
         accumulated_output = []
+        # Store detailed token info for each sample when return_detailed_info is True
+        all_samples_token_details = []
+        
         with torch.no_grad():
             with ctx:
                 for s_i in range(num_samples):
                     sample_header = f"Sample {s_i+1}:\n"
-                    yield sample_header
+                    if return_detailed_info:
+                        yield (sample_header, None)
+                    else:
+                        yield sample_header
                     
                     idx = xids.clone()
                     current_text = prompt
-                    yield current_text
+                    if return_detailed_info:
+                        yield (current_text, None)
+                    else:
+                        yield current_text
                     
                     last_valid_text = prompt
+                    # Store token details for this sample
+                    sample_token_details = []
+                    # Track generated tokens for this sample
+                    generated_tokens_list = []
                     
                     for token_i in range(max_new_tokens):
                         if idx.size(1) == 0:
-                            yield "Can't generate an empty sequence."
+                            err_msg = "Can't generate an empty sequence."
+                            if return_detailed_info:
+                                yield (err_msg, None)
+                            else:
+                                yield err_msg
                             return
                         
                         idx_cond = idx[:, -block_size:]
                         logits, _ = model(idx_cond)
                         logits = logits[:, -1, :] / temperature
+                        
+                        # Before applying top_k mask, get top 5 candidates for detailed info
+                        if return_detailed_info:
+                            # Get top 5 candidates before any masking
+                            top5_values, top5_indices = torch.topk(logits, min(5, logits.size(-1)))
+                            top5_probs_raw = F.softmax(logits, dim=-1)
+                            top5_probs = top5_probs_raw[0, top5_indices[0]].tolist()
+                            top5_tokens = top5_indices[0].tolist()
+                            # Store all probabilities for later use (to get selected token's probability)
+                            all_probs_for_detail = top5_probs_raw[0].clone()
+                            # Decode each candidate token
+                            top5_decoded = []
+                            for t_idx in top5_tokens:
+                                try:
+                                    decoded_token = decode([t_idx])
+                                    top5_decoded.append(decoded_token)
+                                except:
+                                    top5_decoded.append(f"<token_{t_idx}>")
                         
                         if top_k is not None and top_k > 0:
                             v, _ = torch.topk(logits, top_k)
@@ -563,11 +613,49 @@ def cached_generate_text(
                         idx_next = torch.multinomial(probs, num_samples=1)
                         idx = torch.cat((idx, idx_next), dim=1)
                         
+                        selected_token_id = idx_next[0].item()
+                        generated_tokens_list.append(selected_token_id)
+                        
                         # Decode new text
                         current_text = decode(idx[0].tolist())
                         if len(current_text) > len(last_valid_text):
                             new_text = current_text[len(last_valid_text):]
-                            yield new_text
+                            
+                            if return_detailed_info:
+                                # Build candidates list, ensuring selected token is included
+                                candidates = []
+                                selected_in_top5 = selected_token_id in top5_tokens
+                                
+                                # If selected token is not in top 5, add it first with its actual probability
+                                if not selected_in_top5:
+                                    selected_prob = all_probs_for_detail[selected_token_id].item()
+                                    candidates.append({
+                                        'token_id': selected_token_id,
+                                        'text': new_text,
+                                        'probability': selected_prob,
+                                        'is_selected': True
+                                    })
+                                
+                                # Add top 5 candidates
+                                for tid, txt, prob in zip(top5_tokens, top5_decoded, top5_probs):
+                                    candidates.append({
+                                        'token_id': tid,
+                                        'text': txt,
+                                        'probability': prob,
+                                        'is_selected': (tid == selected_token_id)
+                                    })
+                                
+                                # Create token detail info
+                                token_detail = {
+                                    'position': token_i,
+                                    'selected_token_id': selected_token_id,
+                                    'selected_token_text': new_text,
+                                    'top5_candidates': candidates
+                                }
+                                sample_token_details.append(token_detail)
+                                yield (new_text, token_detail)
+                            else:
+                                yield new_text
                             last_valid_text = current_text
                     
                     # Complete current sample
@@ -575,14 +663,28 @@ def cached_generate_text(
                     if len(final_text) > len(last_valid_text):
                         remaining_text = final_text[len(last_valid_text):]
                         if remaining_text.strip():
-                            yield remaining_text
+                            if return_detailed_info:
+                                yield (remaining_text, None)
+                            else:
+                                yield remaining_text
                     
                     full_sample = f"{sample_header}{final_text}"
                     accumulated_output.append(full_sample)
                     
+                    # Store token details for this sample
+                    if return_detailed_info:
+                        all_samples_token_details.append({
+                            'sample_index': s_i,
+                            'generated_tokens': generated_tokens_list,
+                            'token_details': sample_token_details
+                        })
+                    
                     if s_i < num_samples - 1:
                         separator = "\n" + "-" * 30 + "\n"
-                        yield separator
+                        if return_detailed_info:
+                            yield (separator, None)
+                        else:
+                            yield separator
 
         # Save inference history to database
         final_text = "\n\n".join(accumulated_output)
@@ -595,8 +697,15 @@ def cached_generate_text(
         else:
             print("ℹ️ Inference completed, cache retained for reuse")
     
+    except UnknownTokenError:
+        # Re-raise UnknownTokenError so UI can handle it properly
+        raise
     except Exception as ex:
-        yield f"An unexpected error occurred: {str(ex)}"
+        err_msg = f"An unexpected error occurred: {str(ex)}"
+        if return_detailed_info:
+            yield (err_msg, None)
+        else:
+            yield err_msg
         # Decide whether to clear cache on error based on auto_clear_cache parameter
         if auto_clear_cache:
             try:
