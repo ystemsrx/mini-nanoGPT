@@ -96,9 +96,14 @@ def process_data(
     - Only tokens that actually appear in the input data are saved in the vocabulary.
       These tokens are remapped to consecutive integer IDs starting from 0.
     """
+    # For new models, we defer registration until data is validated and processed
+    # This prevents creating empty model entries when data processing fails
+    model_id = None  # Will be set after validation for new models
+    
     # Determine model_id and paths
     if new_model:
-        model_id = dbm.register_model(model_name)
+        # Don't register yet - we'll do it after validating the data
+        pass
     else:
         if selected_model_id is None:
             raise ValueError("selected_model_id is required when not creating a new model.")
@@ -164,11 +169,7 @@ def process_data(
                 res["val_size"] = val_size
             return res
 
-    raw_dir, processed_dir, _ = compose_model_dirs(model_name, model_id)
-    os.makedirs(raw_dir, exist_ok=True)
-    os.makedirs(processed_dir, exist_ok=True)
-
-    # Load text data
+    # Load text data BEFORE registering new model to validate data first
     data = input_text.strip()
     if not data and input_dir.strip():
         input_dir_abs = input_dir.strip()
@@ -180,8 +181,18 @@ def process_data(
                         data += f_in.read()
                 except Exception as e:
                     print(f"Warning: Could not read file {fn}: {e}")
+    
+    # Validate data BEFORE registering new model to database
     if not data:
         raise ValueError("No input text provided. Please check your input text or directory.")
+
+    # Now that data is validated, register new model if needed
+    if new_model:
+        model_id = dbm.register_model(model_name)
+
+    raw_dir, processed_dir, _ = compose_model_dirs(model_name, model_id)
+    os.makedirs(raw_dir, exist_ok=True)
+    os.makedirs(processed_dir, exist_ok=True)
 
     # Save the combined raw input text
     with open(os.path.join(raw_dir, "merged_input.txt"), "w", encoding="utf-8") as f_out:
