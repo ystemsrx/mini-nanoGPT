@@ -21,7 +21,7 @@ def _generate_token_html(tokens_with_text, prompt_text="", prompt_tokens=None):
     prompt_tokens: list of dicts with 'text', 'original_id', 'mapped_id', 'in_vocab' for each prompt token
     """
     html_parts = []
-    html_parts.append('<div style="font-family: monospace; white-space: pre-wrap; line-height: 1.6; padding: 10px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e0e0e0;">')
+    html_parts.append('<div style="font-family: monospace; white-space: pre-wrap; line-height: 1.6; padding: 10px; background: #ffffff; border-radius: 8px; border: 1px solid #e0e0e0;">')
 
     # Add prompt part with RED border box to highlight user input
     if prompt_tokens:

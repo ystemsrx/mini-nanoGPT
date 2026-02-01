@@ -10,13 +10,13 @@ from src.ui.charts import generate_loss_chart_html
 def update_lr_scheduler_params(scheduler_type):
     defaults_train = DEFAULT_CONFIG["training"]
 
-    # Initialize all components as non-interactive, display empty but retain defaults
-    warmup_update = gr.update(interactive=False, value="")
-    lr_decay_update = gr.update(interactive=False, value="")
-    min_lr_update = gr.update(interactive=False, value="")
-    step_size_update = gr.update(interactive=False, value="")
-    step_gamma_update = gr.update(interactive=False, value="")
-    polynomial_power_update = gr.update(interactive=False, value="")
+    # Use None for disabled Number components to avoid type errors
+    warmup_update = gr.update(interactive=False, value=None)
+    lr_decay_update = gr.update(interactive=False, value=None)
+    min_lr_update = gr.update(interactive=False, value=None)
+    step_size_update = gr.update(interactive=False, value=None)
+    step_gamma_update = gr.update(interactive=False, value=None)
+    polynomial_power_update = gr.update(interactive=False, value=None)
 
     if scheduler_type == "none":
         pass
@@ -31,6 +31,8 @@ def update_lr_scheduler_params(scheduler_type):
         lr_decay_update = gr.update(interactive=True, value=defaults_train["lr_decay_iters"])
         min_lr_update = gr.update(interactive=True, value=defaults_train["min_lr"])
     elif scheduler_type == "step":
+        warmup_update = gr.update(interactive=True, value=defaults_train["warmup_iters"])
+        min_lr_update = gr.update(interactive=True, value=defaults_train["min_lr"])
         step_size_update = gr.update(interactive=True, value=defaults_train["step_size"])
         step_gamma_update = gr.update(interactive=True, value=defaults_train["step_gamma"])
     elif scheduler_type == "polynomial":

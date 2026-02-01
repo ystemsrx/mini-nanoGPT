@@ -161,7 +161,7 @@ def inference_cb(
             # Generate HTML outputs
             # Main output with token highlighting
             main_html_parts = []
-            main_html_parts.append('<div style="font-family: system-ui, sans-serif;">')
+            main_html_parts.append('<div style="font-family: system-ui, sans-serif; background: #ffffff; border: 2px solid #000000; border-radius: 8px; padding: 15px;">')
 
             # Show all completed samples
             for sample_info in all_samples_info:
@@ -208,7 +208,7 @@ def inference_cb(
 
         # Final HTML output
         main_html_parts = []
-        main_html_parts.append('<div style="font-family: system-ui, sans-serif;">')
+        main_html_parts.append('<div style="font-family: system-ui, sans-serif; background: #ffffff; border: 2px solid #000000; border-radius: 8px; padding: 15px;">')
         for sample_info in all_samples_info:
             main_html_parts.append(
                 f'<div style="margin-bottom: 15px;"><strong>Sample {sample_info["sample_idx"] + 1}:</strong><br>'

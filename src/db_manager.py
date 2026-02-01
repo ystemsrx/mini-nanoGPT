@@ -76,12 +76,22 @@ class DBManager:
                 advanced_html TEXT,
                 FOREIGN KEY(model_id) REFERENCES models(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS sft_configs(
+                model_id INTEGER PRIMARY KEY,
+                config_json TEXT NOT NULL,
+                FOREIGN KEY(model_id) REFERENCES models(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS chat_history(
                 model_id INTEGER PRIMARY KEY,
                 history_json TEXT,
                 advanced_html TEXT,
                 system_prompt TEXT,
                 token_ids_json TEXT,
+                FOREIGN KEY(model_id) REFERENCES models(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS sft_logs(
+                model_id INTEGER PRIMARY KEY,
+                log_path TEXT NOT NULL,
                 FOREIGN KEY(model_id) REFERENCES models(id) ON DELETE CASCADE
             );
             """
@@ -382,6 +392,28 @@ class DBManager:
         )
         self.conn.commit()
 
+    def save_sft_config(self, model_id: int, cfg: dict):
+        """Saves or updates the SFT configuration for a model."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "INSERT INTO sft_configs(model_id, config_json) "
+            "VALUES(?,?) "
+            "ON CONFLICT(model_id) DO UPDATE SET config_json=excluded.config_json",
+            (model_id, json.dumps(cfg, ensure_ascii=False, indent=2))
+        )
+        self.conn.commit()
+
+    def save_sft_log(self, model_id: int, log_path: str):
+        """Saves or updates the SFT training log path for a model (stored relative to project root)."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "INSERT INTO sft_logs(model_id, log_path) "
+            "VALUES(?,?) "
+            "ON CONFLICT(model_id) DO UPDATE SET log_path=excluded.log_path",
+            (model_id, self._rel(log_path))  # Store relative path
+        )
+        self.conn.commit()
+
     def save_inference_history(self, model_id: int, content: str, html_content: str = None, advanced_html: str = None):
         """
         Saves or updates the inference history for a model.
@@ -497,6 +529,25 @@ class DBManager:
         cur.execute("SELECT config_json FROM inference_configs WHERE model_id = ?", (model_id,))
         row = cur.fetchone()
         return json.loads(row["config_json"]) if row else None
+
+    def get_sft_config(self, model_id: int) -> Optional[dict]:
+        """
+        Retrieves the SFT configuration (as a dictionary) for the specified model.
+        """
+        cur = self.conn.cursor()
+        cur.execute("SELECT config_json FROM sft_configs WHERE model_id = ?", (model_id,))
+        row = cur.fetchone()
+        return json.loads(row["config_json"]) if row else None
+
+    def get_sft_log_path(self, model_id: int) -> str:
+        """
+        Retrieves the absolute path to the SFT training log file for the specified model.
+        Returns an empty string if not found.
+        """
+        cur = self.conn.cursor()
+        cur.execute("SELECT log_path FROM sft_logs WHERE model_id = ?", (model_id,))
+        row = cur.fetchone()
+        return self._abs(row["log_path"]) if row and row["log_path"] else ""
 
     def get_inference_history(self, model_id: int) -> str:
         """

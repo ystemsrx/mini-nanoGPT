@@ -31,18 +31,20 @@ def build_app_interface(selected_lang: str = "zh"):
 
     with gr.Blocks(title=T["app_title"], css=CUSTOM_CSS) as demo:
 
-        # ========= Top: model management / language ========= #
-        with gr.Row():
-            model_dropdown = gr.Dropdown(label=T["registered_models"], choices=_get_model_choices_list(), value=None, interactive=True)
-            refresh_models_btn = gr.Button(T["refresh_tables"])
-            delete_model_btn = gr.Button(T["delete_selected_model"], variant="stop")
-
+        # ========= Top: language ========= #
         lang_select = gr.Dropdown(
             label=T["language_label"],
             choices=list(LANG_JSON.keys()),
             value=selected_lang,
             interactive=True,
         )
+
+        # ========= Model management ========= #
+        with gr.Row(equal_height=True):
+            model_dropdown = gr.Dropdown(label=T["registered_models"], choices=_get_model_choices_list(), value=None, interactive=True, scale=2)
+            with gr.Column(scale=1):
+                refresh_models_btn = gr.Button(T["refresh_tables"])
+                delete_model_btn = gr.Button(T["delete_selected_model"], variant="stop")
 
         # ========= Tabs ========= #
         with gr.Tabs() as main_tabs:
@@ -362,8 +364,9 @@ def build_app_interface(selected_lang: str = "zh"):
                             info="Fallback to basic implementations on error",
                         )
 
-                train_btn = gr.Button(T["train_start_btn"])
-                stop_btn = gr.Button(T["stop_btn"])
+                with gr.Row():
+                    train_btn = gr.Button(T["train_start_btn"])
+                    stop_btn = gr.Button(T["stop_btn"])
 
                 with gr.Row():
                     with gr.Column(scale=1):
@@ -374,17 +377,16 @@ def build_app_interface(selected_lang: str = "zh"):
 
             # -------------- SFT Tab -------------- #
             with gr.Tab(T["sft_tab"]) as sft_tab:
-                gr.Markdown("### Supervised Fine-Tuning (SFT)")
+                sft_title_md = gr.Markdown(f"### {T['sft_title']}")
 
-                with gr.Row():
+                with gr.Row(equal_height=True):
                     with gr.Column(scale=1):
-                        sft_base_model = gr.Dropdown(
-                            label=T["sft_base_model"],
-                            choices=_get_model_choices_list(),
-                            value=None,
-                            interactive=True,
+                        sft_dataset_example = gr.Code(
+                            label=T["sft_dataset_example"],
+                            value=T["sft_dataset_example_json"],
+                            language="json",
+                            interactive=False,
                         )
-                        sft_refresh_model_btn = gr.Button("🔄 Refresh Models", size="sm")
 
                     with gr.Column(scale=2):
                         sft_dataset_file = gr.File(
@@ -397,55 +399,132 @@ def build_app_interface(selected_lang: str = "zh"):
                             placeholder="Or enter directory path containing JSON files...",
                         )
 
-                sft_format_status = gr.Textbox(
-                    label=T["sft_format_status"],
-                    value=T["sft_no_dataset"],
-                    interactive=False,
-                )
-                sft_validate_btn = gr.Button("🔍 Validate Dataset")
+                with gr.Row():
+                    sft_format_status = gr.Textbox(
+                        label=T["sft_format_status"],
+                        value=T["sft_no_dataset"],
+                        interactive=False,
+                        scale=4,
+                    )
+                    with gr.Column(scale=1):
+                        gr.HTML("<div style='flex-grow: 1;'></div>")
+                        sft_validate_btn = gr.Button(T["sft_validate_btn"])
 
                 # Store loaded dataset in state
                 sft_dataset_state = gr.State(value=[])
 
-                with gr.Row():
-                    with gr.Column():
-                        sft_epochs = gr.Number(
-                            label=T["sft_epochs"],
-                            value=DEFAULT_CONFIG["sft"]["epochs"],
-                            minimum=1,
-                            maximum=100,
+                with gr.Accordion(T["sft_basic_params"], open=True) as sft_basic_params_accordion:
+                    with gr.Row():
+                        with gr.Column():
+                            sft_epochs = gr.Number(
+                                label=T["sft_epochs"],
+                                value=DEFAULT_CONFIG["sft"]["epochs"],
+                                minimum=1,
+                                maximum=100,
+                            )
+                            sft_batch_size = gr.Number(
+                                label=T["sft_batch_size"],
+                                value=DEFAULT_CONFIG["sft"]["batch_size"],
+                                minimum=1,
+                                maximum=64,
+                            )
+                            sft_gradient_accumulation = gr.Number(
+                                label=T["sft_gradient_accumulation"],
+                                value=DEFAULT_CONFIG["sft"]["gradient_accumulation_steps"],
+                                minimum=1,
+                                maximum=32,
+                            )
+                        with gr.Column():
+                            sft_learning_rate = gr.Number(
+                                label=T["sft_learning_rate"],
+                                value=DEFAULT_CONFIG["sft"]["learning_rate"],
+                                step=1e-6,
+                            )
+                            sft_lr_scheduler = gr.Dropdown(
+                                label=T["sft_lr_scheduler"],
+                                choices=[
+                                    "none",
+                                    "cosine",
+                                    "constant_with_warmup",
+                                    "linear",
+                                    "step",
+                                    "polynomial",
+                                ],
+                                value=DEFAULT_CONFIG["sft"]["lr_scheduler_type"],
+                            )
+                            sft_max_seq_length = gr.Number(
+                                label=T["sft_max_seq_length"],
+                                value=DEFAULT_CONFIG["sft"]["max_seq_length"],
+                                minimum=32,
+                                maximum=4096,
+                            )
+
+                with gr.Accordion(T["sft_scheduler_params"], open=False) as sft_scheduler_accordion:
+                    with gr.Row():
+                        sft_warmup_iters = gr.Number(
+                            label=T["sft_warmup_iters"],
+                            value=DEFAULT_CONFIG["sft"]["warmup_iters"],
+                            minimum=0,
                         )
-                        sft_batch_size = gr.Number(
-                            label=T["sft_batch_size"],
-                            value=DEFAULT_CONFIG["sft"]["batch_size"],
-                            minimum=1,
-                            maximum=64,
+                        sft_lr_decay_iters = gr.Number(
+                            label=T["sft_lr_decay_iters"],
+                            value=DEFAULT_CONFIG["sft"]["lr_decay_iters"],
+                            minimum=0,
                         )
-                        sft_gradient_accumulation = gr.Number(
-                            label=T["sft_gradient_accumulation"],
-                            value=DEFAULT_CONFIG["sft"]["gradient_accumulation_steps"],
-                            minimum=1,
-                            maximum=32,
-                        )
-                    with gr.Column():
-                        sft_learning_rate = gr.Number(
-                            label=T["sft_learning_rate"],
-                            value=DEFAULT_CONFIG["sft"]["learning_rate"],
+                        sft_min_lr = gr.Number(
+                            label=T["sft_min_lr"],
+                            value=DEFAULT_CONFIG["sft"]["min_lr"],
                             step=1e-6,
+                            minimum=0,
                         )
-                        sft_max_seq_length = gr.Number(
-                            label=T["sft_max_seq_length"],
-                            value=DEFAULT_CONFIG["sft"]["max_seq_length"],
-                            minimum=32,
-                            maximum=4096,
+                    with gr.Row():
+                        sft_step_size = gr.Number(
+                            label=T["sft_step_size"],
+                            value=DEFAULT_CONFIG["sft"]["step_size"],
+                            minimum=0,
                         )
-                        sft_warmup_ratio = gr.Number(
-                            label=T["sft_warmup_ratio"],
-                            value=DEFAULT_CONFIG["sft"]["warmup_ratio"],
+                        sft_step_gamma = gr.Number(
+                            label=T["sft_step_gamma"],
+                            value=DEFAULT_CONFIG["sft"]["step_gamma"],
                             step=0.01,
                             minimum=0,
-                            maximum=1,
                         )
+                        sft_polynomial_power = gr.Number(
+                            label=T["sft_poly_power"],
+                            value=DEFAULT_CONFIG["sft"]["polynomial_power"],
+                            step=0.1,
+                            minimum=0,
+                        )
+
+                with gr.Accordion(T["sft_optim_params"], open=True) as sft_optim_params_accordion:
+                    with gr.Row():
+                        with gr.Column():
+                            sft_weight_decay = gr.Number(
+                                label=T["sft_weight_decay"],
+                                value=DEFAULT_CONFIG["sft"]["weight_decay"],
+                                step=1e-4,
+                                minimum=0,
+                            )
+                            sft_label_smoothing = gr.Number(
+                                label=T["sft_label_smoothing"],
+                                value=DEFAULT_CONFIG["sft"]["label_smoothing"],
+                                step=0.01,
+                                minimum=0,
+                                maximum=0.9,
+                            )
+                        with gr.Column():
+                            sft_grad_clip = gr.Number(
+                                label=T["sft_grad_clip"],
+                                value=DEFAULT_CONFIG["sft"]["grad_clip"],
+                                step=0.1,
+                                minimum=0,
+                            )
+                            sft_freeze_layers = gr.Number(
+                                label=T["sft_freeze_layers"],
+                                value=DEFAULT_CONFIG["sft"]["freeze_layers"],
+                                minimum=0,
+                                maximum=64,
+                            )
 
                 sft_system_prompt = gr.Textbox(
                     label=T["sft_system_prompt"],
@@ -454,12 +533,12 @@ def build_app_interface(selected_lang: str = "zh"):
                 )
 
                 with gr.Row():
-                    sft_start_btn = gr.Button(T["sft_start_btn"], variant="primary")
+                    sft_start_btn = gr.Button(T["sft_start_btn"], variant="primary", interactive=False)
                     sft_stop_btn = gr.Button(T["sft_stop_btn"], variant="stop")
 
                 with gr.Row():
                     with gr.Column(scale=1):
-                        sft_progress = gr.HTML(label="SFT Progress")
+                        sft_progress = gr.HTML(label=T["sft_progress"])
                         sft_log = gr.HTML(label=T["sft_log"], elem_id="sft-log-box")
                     with gr.Column(scale=2):
                         sft_plot = gr.HTML(label=T["sft_plot"])
@@ -895,6 +974,27 @@ def build_app_interface(selected_lang: str = "zh"):
             comp_left_out_dir,
             comp_right_data_dir,
             comp_right_out_dir,
+            # SFT params (per-model persistence)
+            sft_epochs,
+            sft_learning_rate,
+            sft_batch_size,
+            sft_max_seq_length,
+            sft_gradient_accumulation,
+            sft_lr_scheduler,
+            sft_warmup_iters,
+            sft_lr_decay_iters,
+            sft_min_lr,
+            sft_step_size,
+            sft_step_gamma,
+            sft_polynomial_power,
+            sft_label_smoothing,
+            sft_freeze_layers,
+            sft_grad_clip,
+            sft_weight_decay,
+            sft_system_prompt,
+            # SFT training history (log and plot)
+            sft_log,
+            sft_plot,
         ]
 
         # ------------------------------------------------------------------
@@ -1026,6 +1126,39 @@ def build_app_interface(selected_lang: str = "zh"):
             max_cache_size_box,
             strict_validation_box,
             fallback_on_error_box,
+            # SFT tab components
+            sft_tab,
+            sft_title_md,
+            sft_basic_params_accordion,
+            sft_optim_params_accordion,
+            sft_scheduler_accordion,
+            sft_dataset_example,
+            sft_dataset_file,
+            sft_dataset_dir,
+            sft_format_status,
+            sft_validate_btn,
+            sft_epochs,
+            sft_learning_rate,
+            sft_batch_size,
+            sft_max_seq_length,
+            sft_gradient_accumulation,
+            sft_lr_scheduler,
+            sft_warmup_iters,
+            sft_lr_decay_iters,
+            sft_min_lr,
+            sft_step_size,
+            sft_step_gamma,
+            sft_polynomial_power,
+            sft_label_smoothing,
+            sft_freeze_layers,
+            sft_grad_clip,
+            sft_weight_decay,
+            sft_system_prompt,
+            sft_start_btn,
+            sft_stop_btn,
+            sft_progress,
+            sft_log,
+            sft_plot,
         ]
         bind_model_management(
             model_dropdown,
@@ -1078,8 +1211,6 @@ def build_app_interface(selected_lang: str = "zh"):
         # SFT Callbacks
         # ------------------------------------------------------------------
         bind_sft(
-            sft_refresh_model_btn,
-            sft_base_model,
             sft_validate_btn,
             sft_dataset_file,
             sft_dataset_dir,
@@ -1087,12 +1218,23 @@ def build_app_interface(selected_lang: str = "zh"):
             sft_format_status,
             sft_dataset_state,
             sft_start_btn,
+            model_dropdown,
             sft_epochs,
             sft_learning_rate,
             sft_batch_size,
             sft_max_seq_length,
             sft_gradient_accumulation,
-            sft_warmup_ratio,
+            sft_lr_scheduler,
+            sft_warmup_iters,
+            sft_lr_decay_iters,
+            sft_min_lr,
+            sft_step_size,
+            sft_step_gamma,
+            sft_polynomial_power,
+            sft_label_smoothing,
+            sft_freeze_layers,
+            sft_grad_clip,
+            sft_weight_decay,
             sft_system_prompt,
             sft_progress,
             sft_log,

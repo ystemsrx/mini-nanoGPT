@@ -8,6 +8,7 @@ from src.ui.charts import generate_loss_chart_html
 from src.ui.helpers import _create_plot_html_from_log, _get_model_choices_list
 from src.ui.state import dbm
 from src.ui.callbacks.training import update_lr_scheduler_params, update_self_attention_params
+from src.ui.callbacks.sft import update_sft_lr_scheduler_params
 
 
 def _reset_updates():
@@ -138,7 +139,34 @@ def _reset_updates():
         _d(),
     ]
 
-    return base_updates + comparison_updates
+    d_sft = DEFAULT_CONFIG["sft"]
+    sft_warmup_update, sft_lr_decay_update, sft_min_lr_update, sft_step_size_update, sft_step_gamma_update, sft_polynomial_power_update = (
+        update_sft_lr_scheduler_params(d_sft["lr_scheduler_type"])
+    )
+    sft_updates = [
+        _d(d_sft["epochs"]),
+        _d(d_sft["learning_rate"]),
+        _d(d_sft["batch_size"]),
+        _d(d_sft["max_seq_length"]),
+        _d(d_sft["gradient_accumulation_steps"]),
+        _d(d_sft["lr_scheduler_type"]),
+        sft_warmup_update,
+        sft_lr_decay_update,
+        sft_min_lr_update,
+        sft_step_size_update,
+        sft_step_gamma_update,
+        sft_polynomial_power_update,
+        _d(d_sft["label_smoothing"]),
+        _d(d_sft["freeze_layers"]),
+        _d(d_sft["grad_clip"]),
+        _d(d_sft["weight_decay"]),
+        _d(d_sft["system_prompt"]),
+        # SFT training history (log and plot) - reset to empty
+        "",
+        generate_loss_chart_html([], []),
+    ]
+
+    return base_updates + comparison_updates + sft_updates
 
 
 def select_model_cb(sel: str):
@@ -151,6 +179,7 @@ def select_model_cb(sel: str):
 
     cfg = dbm.get_training_config(mid) or {}
     icfg = dbm.get_inference_config(mid) or {}
+    sft_cfg = dbm.get_sft_config(mid) or {}
     info = dbm.get_model_basic_info(mid) or {}
     name = info.get("name", "unknown_model")
 
@@ -203,6 +232,7 @@ def select_model_cb(sel: str):
 
     d_train_defaults = DEFAULT_CONFIG["training"]
     d_inf_defaults = DEFAULT_CONFIG["inference"]
+    d_sft_defaults = DEFAULT_CONFIG["sft"]
 
     # Get full inference history including HTML formatted output
     inference_history_data = dbm.get_inference_history_full(mid)
@@ -347,8 +377,76 @@ def select_model_cb(sel: str):
         gr.update(value=""),
         gr.update(value=""),
     ]
+    def _sft(k, default_val_from_const):
+        return sft_cfg.get(k, default_val_from_const)
 
-    return base_updates + comparison_updates
+    sft_scheduler_type = _sft("lr_scheduler_type", d_sft_defaults["lr_scheduler_type"])
+    sft_warmup_update, sft_lr_decay_update, sft_min_lr_update, sft_step_size_update, sft_step_gamma_update, sft_polynomial_power_update = (
+        update_sft_lr_scheduler_params(sft_scheduler_type, sft_cfg)
+    )
+
+    # Load SFT loss log
+    sft_loss_log_path = dbm.get_sft_log_path(mid)
+    sft_loss_plot_html_content = ""
+    sft_log_s = ""
+    
+    if sft_loss_log_path and os.path.exists(sft_loss_log_path):
+        try:
+            with open(sft_loss_log_path, "rb") as f:
+                sft_log_data = pickle.load(f)
+            
+            sft_tr_steps = sft_log_data.get("train_steps", [])
+            sft_tr_losses = sft_log_data.get("train_losses", [])
+            total_opt_steps = sft_log_data.get("total_opt_steps", 0)
+            total_samples = sft_log_data.get("total_samples", 0)
+            stopped_early = sft_log_data.get("stopped_early", False)
+            
+            # Generate plot HTML
+            if sft_tr_steps and sft_tr_losses:
+                train_data = list(zip(sft_tr_steps, sft_tr_losses))
+                sft_loss_plot_html_content = generate_loss_chart_html(train_data, [])
+            
+            # Generate log text (as HTML since sft_log is gr.HTML)
+            log_lines = []
+            if sft_tr_steps:
+                status = "🛑 stopped early" if stopped_early else "✅ completed"
+                log_lines.append(f"<div style='font-family: monospace; padding: 10px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e0e0e0;'>")
+                log_lines.append(f"<b>SFT Training History ({status})</b><br>")
+                log_lines.append(f"Total optimizer steps: {total_opt_steps}, Samples: {total_samples}<br><br>")
+                for i, (step, loss) in enumerate(zip(sft_tr_steps, sft_tr_losses)):
+                    log_lines.append(f"Step {step}: loss={loss:.4f}<br>")
+                    if i >= 199:
+                        log_lines.append(f"<i>... (showing first 200 of {len(sft_tr_steps)} records)</i>")
+                        break
+                log_lines.append("</div>")
+            sft_log_s = "".join(log_lines)
+        except Exception as e_sft_log:
+            sft_log_s = f"Error loading SFT log: {str(e_sft_log)}"
+
+    sft_updates = [
+        gr.update(value=_sft("epochs", d_sft_defaults["epochs"])),
+        gr.update(value=_sft("learning_rate", d_sft_defaults["learning_rate"])),
+        gr.update(value=_sft("batch_size", d_sft_defaults["batch_size"])),
+        gr.update(value=_sft("max_seq_length", d_sft_defaults["max_seq_length"])),
+        gr.update(value=_sft("gradient_accumulation_steps", d_sft_defaults["gradient_accumulation_steps"])),
+        gr.update(value=sft_scheduler_type),
+        sft_warmup_update,
+        sft_lr_decay_update,
+        sft_min_lr_update,
+        sft_step_size_update,
+        sft_step_gamma_update,
+        sft_polynomial_power_update,
+        gr.update(value=_sft("label_smoothing", d_sft_defaults["label_smoothing"])),
+        gr.update(value=_sft("freeze_layers", d_sft_defaults["freeze_layers"])),
+        gr.update(value=_sft("grad_clip", d_sft_defaults["grad_clip"])),
+        gr.update(value=_sft("weight_decay", d_sft_defaults["weight_decay"])),
+        gr.update(value=_sft("system_prompt", d_sft_defaults["system_prompt"])),
+        # SFT training history (log and plot)
+        sft_log_s,
+        sft_loss_plot_html_content,
+    ]
+
+    return base_updates + comparison_updates + sft_updates
 
 
 def delete_model_cb(sel: str):

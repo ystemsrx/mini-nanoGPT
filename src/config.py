@@ -97,7 +97,18 @@ DEFAULT_CONFIG = {
         "batch_size": 4,
         "max_seq_length": 512,
         "gradient_accumulation_steps": 4,
+        "lr_scheduler_type": "cosine",
+        "warmup_iters": 0,
+        "lr_decay_iters": 0,
+        "min_lr": 1e-6,
+        "step_size": 50,
+        "step_gamma": 0.1,
+        "polynomial_power": 2.0,
         "warmup_ratio": 0.1,
+        "label_smoothing": 0.0,
+        "freeze_layers": 0,
+        "grad_clip": 1.0,
+        "weight_decay": 0.01,
         "save_steps": 100,
         "logging_steps": 10,
         "system_prompt": "You are a helpful assistant."
@@ -110,7 +121,7 @@ LANG_JSON = {
         "app_title": "Mini Nano GPT",
         "language_label": "Language",
         "data_process_tab": "Data Processing",
-        "train_tab": "Training",
+        "train_tab": "Pre-training",
         "infer_tab": "Inference",
         "compare_tab": "Comparison",
         "model_tab": "Model Management",
@@ -246,25 +257,65 @@ LANG_JSON = {
 
         # SFT Tab
         "sft_tab": "SFT",
-        "sft_base_model": "Base Model (Pre-trained)",
+        "sft_title": "Supervised Fine-Tuning (SFT)",
+        "sft_dataset_example": "Example Dataset Format",
         "sft_dataset_file": "Dataset File (JSON)",
         "sft_dataset_dir": "Dataset Directory",
         "sft_format_status": "Format Validation",
+        "sft_validate_btn": "🔍 Validate Dataset",
+        "sft_basic_params": "SFT Basic Parameters",
+        "sft_optim_params": "Optimization & Regularization",
+        "sft_scheduler_params": "Learning Rate Scheduler",
         "sft_epochs": "Epochs",
         "sft_learning_rate": "Learning Rate",
         "sft_batch_size": "Batch Size",
         "sft_max_seq_length": "Max Sequence Length",
         "sft_gradient_accumulation": "Gradient Accumulation Steps",
-        "sft_warmup_ratio": "Warmup Ratio",
+        "sft_lr_scheduler": "Learning Rate Scheduler",
+        "sft_warmup_iters": "Warmup Steps",
+        "sft_lr_decay_iters": "LR Decay Steps",
+        "sft_min_lr": "Minimum Learning Rate",
+        "sft_step_size": "Step Size",
+        "sft_step_gamma": "Step Gamma",
+        "sft_poly_power": "Polynomial Power",
+        "sft_label_smoothing": "Label Smoothing",
+        "sft_freeze_layers": "Freeze Layers",
+        "sft_grad_clip": "Gradient Clipping",
+        "sft_weight_decay": "Weight Decay",
         "sft_system_prompt": "System Prompt",
         "sft_start_btn": "Start SFT Training",
         "sft_stop_btn": "Stop SFT",
+        "sft_progress": "SFT Progress",
         "sft_log": "SFT Training Log",
         "sft_plot": "SFT Loss Curve",
         "sft_result": "SFT Result",
         "sft_valid_format": "✅ Valid Alpaca Format",
         "sft_invalid_format": "❌ Invalid Format",
         "sft_no_dataset": "No dataset loaded",
+        "sft_dataset_example_json": (
+            "[\n"
+            "  {\n"
+            "    \"instruction\": \"Why is the sky blue?\",\n"
+            "    \"input\": \"\",\n"
+            "    \"output\": \"The sky appears blue mainly due to Rayleigh scattering in the atmosphere...\"\n"
+            "  },\n"
+            "  {\n"
+            "    \"instruction\": \"Please explain this concept:\",\n"
+            "    \"input\": \"Relativity\",\n"
+            "    \"output\": \"Relativity is a physical theory proposed by Albert Einstein...\"\n"
+            "  },\n"
+            "  {\n"
+            "    \"instruction\": \"Summarize the following text:\",\n"
+            "    \"input\": \"Neural networks are inspired by the brain and consist of layers of interconnected neurons.\",\n"
+            "    \"output\": \"Neural networks are brain-inspired layered models made of connected neurons.\"\n"
+            "  },\n"
+            "  {\n"
+            "    \"instruction\": \"Write a short greeting:\",\n"
+            "    \"input\": \"\",\n"
+            "    \"output\": \"Hello! How can I help you today?\"\n"
+            "  }\n"
+            "]"
+        ),
 
         # Chat Mode
         "inf_chat_mode": "Chat Mode (for SFT models)",
@@ -278,7 +329,7 @@ LANG_JSON = {
         "app_title": "Mini Nano GPT",
         "language_label": "语言",
         "data_process_tab": "数据处理",
-        "train_tab": "训练",
+        "train_tab": "预训练",
         "infer_tab": "推理",
         "compare_tab": "对比",
         "model_tab": "模型管理",
@@ -414,25 +465,65 @@ LANG_JSON = {
 
         # SFT Tab
         "sft_tab": "SFT微调",
-        "sft_base_model": "基座模型（预训练）",
+        "sft_title": "监督微调 (SFT)",
+        "sft_dataset_example": "示例数据集格式",
         "sft_dataset_file": "数据集文件 (JSON)",
         "sft_dataset_dir": "数据集目录",
         "sft_format_status": "格式验证",
+        "sft_validate_btn": "🔍 验证数据集",
+        "sft_basic_params": "SFT基础参数",
+        "sft_optim_params": "优化与正则化",
+        "sft_scheduler_params": "学习率调度器",
         "sft_epochs": "训练轮数 (Epochs)",
         "sft_learning_rate": "学习率 (Learning Rate)",
         "sft_batch_size": "批量大小 (Batch Size)",
         "sft_max_seq_length": "最大序列长度 (Max Sequence Length)",
         "sft_gradient_accumulation": "梯度累积步数 (Gradient Accumulation)",
-        "sft_warmup_ratio": "预热比例 (Warmup Ratio)",
+        "sft_lr_scheduler": "学习率调度器",
+        "sft_warmup_iters": "预热步数 (Warmup Steps)",
+        "sft_lr_decay_iters": "学习率衰减步数 (LR Decay Steps)",
+        "sft_min_lr": "最小学习率 (Minimum LR)",
+        "sft_step_size": "阶梯步长 (Step Size)",
+        "sft_step_gamma": "阶梯衰减 (Step Gamma)",
+        "sft_poly_power": "多项式幂 (Polynomial Power)",
+        "sft_label_smoothing": "标签平滑 (Label Smoothing)",
+        "sft_freeze_layers": "层冻结 (Freeze Layers)",
+        "sft_grad_clip": "梯度裁剪 (Gradient Clipping)",
+        "sft_weight_decay": "权重衰减 (Weight Decay)",
         "sft_system_prompt": "系统提示词 (System Prompt)",
         "sft_start_btn": "开始SFT训练",
         "sft_stop_btn": "停止SFT",
+        "sft_progress": "SFT进度",
         "sft_log": "SFT训练日志",
         "sft_plot": "SFT损失曲线",
         "sft_result": "SFT结果",
         "sft_valid_format": "✅ Alpaca格式有效",
         "sft_invalid_format": "❌ 格式无效",
         "sft_no_dataset": "未加载数据集",
+        "sft_dataset_example_json": (
+            "[\n"
+            "  {\n"
+            "    \"instruction\": \"天空为什么是蓝色的？\",\n"
+            "    \"input\": \"\",\n"
+            "    \"output\": \"天空之所以呈现蓝色，主要是由于大气散射现象...\"\n"
+            "  },\n"
+            "  {\n"
+            "    \"instruction\": \"请解释此概念：\",\n"
+            "    \"input\": \"相对论\",\n"
+            "    \"output\": \"相对论是由阿尔伯特·爱因斯坦提出的物理学理论...\"\n"
+            "  },\n"
+            "  {\n"
+            "    \"instruction\": \"请总结下面这段话：\",\n"
+            "    \"input\": \"神经网络受大脑启发，由多层相互连接的神经元组成。\",\n"
+            "    \"output\": \"神经网络是由多层互联神经元构成的脑启发模型。\"\n"
+            "  },\n"
+            "  {\n"
+            "    \"instruction\": \"写一句简短的问候：\",\n"
+            "    \"input\": \"\",\n"
+            "    \"output\": \"你好！很高兴为你提供帮助。\"\n"
+            "  }\n"
+            "]"
+        ),
 
         # Chat Mode
         "inf_chat_mode": "对话模式（用于SFT模型）",

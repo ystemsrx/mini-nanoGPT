@@ -7,6 +7,7 @@ Supports Alpaca-format datasets and Qwen chat template.
 import os
 import json
 import math
+import pickle
 from pathlib import Path
 from contextlib import nullcontext
 from typing import List, Dict, Optional, Tuple, Generator
@@ -399,12 +400,23 @@ def sft_train_generator(
     data_dir: str,
     dataset: List[Dict],
     out_dir: str,
+    model_id: int = None,
     epochs: int = DEFAULT_CONFIG["sft"]["epochs"],
     learning_rate: float = DEFAULT_CONFIG["sft"]["learning_rate"],
     batch_size: int = DEFAULT_CONFIG["sft"]["batch_size"],
     max_seq_length: int = DEFAULT_CONFIG["sft"]["max_seq_length"],
     gradient_accumulation_steps: int = DEFAULT_CONFIG["sft"]["gradient_accumulation_steps"],
-    warmup_ratio: float = DEFAULT_CONFIG["sft"]["warmup_ratio"],
+    lr_scheduler_type: str = DEFAULT_CONFIG["sft"]["lr_scheduler_type"],
+    warmup_iters: int = DEFAULT_CONFIG["sft"]["warmup_iters"],
+    lr_decay_iters: int = DEFAULT_CONFIG["sft"]["lr_decay_iters"],
+    min_lr: float = DEFAULT_CONFIG["sft"]["min_lr"],
+    step_size: int = DEFAULT_CONFIG["sft"]["step_size"],
+    step_gamma: float = DEFAULT_CONFIG["sft"]["step_gamma"],
+    polynomial_power: float = DEFAULT_CONFIG["sft"]["polynomial_power"],
+    label_smoothing: float = DEFAULT_CONFIG["sft"]["label_smoothing"],
+    freeze_layers: int = DEFAULT_CONFIG["sft"]["freeze_layers"],
+    grad_clip: float = DEFAULT_CONFIG["sft"]["grad_clip"],
+    weight_decay: float = DEFAULT_CONFIG["sft"]["weight_decay"],
     system_prompt: str = DEFAULT_CONFIG["sft"]["system_prompt"],
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
     dtype: str = "float16"
@@ -540,6 +552,18 @@ def sft_train_generator(
         
         model.to(device)
         model.train()
+
+        # Optional: freeze lower layers for parameter-efficient tuning
+        if freeze_layers and freeze_layers > 0:
+            if hasattr(model, "blocks"):
+                num_blocks = len(model.blocks)
+                num_freeze = min(int(freeze_layers), num_blocks)
+                for block in model.blocks[:num_freeze]:
+                    for param in block.parameters():
+                        param.requires_grad = False
+            elif hasattr(model, "token_embedding_table"):
+                for param in model.token_embedding_table.parameters():
+                    param.requires_grad = False
         
         # D2) Validate max_seq_length against model's block_size
         if max_seq_length > model.config.block_size:
@@ -552,12 +576,12 @@ def sft_train_generator(
         # Optimizer
         if is_self_attention_model:
             optimizer = configure_optimizers_self_attn(
-                model, weight_decay=0.01, learning_rate=learning_rate, 
+                model, weight_decay=weight_decay, learning_rate=learning_rate, 
                 betas=(0.9, 0.999), device_type=device_type
             )
         else:
             optimizer = configure_optimizers(
-                model, weight_decay=0.01, learning_rate=learning_rate,
+                model, weight_decay=weight_decay, learning_rate=learning_rate,
                 betas=(0.9, 0.999), device_type=device_type
             )
         
@@ -688,7 +712,45 @@ def sft_train_generator(
         total_micro_steps = epochs * steps_per_epoch
         # B3) Calculate optimizer steps (actual parameter updates)
         total_opt_steps = math.ceil(total_micro_steps / gradient_accumulation_steps)
-        warmup_opt_steps = int(total_opt_steps * warmup_ratio)
+        warmup_opt_steps = int(warmup_iters) if warmup_iters and warmup_iters > 0 else int(total_opt_steps * DEFAULT_CONFIG["sft"]["warmup_ratio"])
+        warmup_opt_steps = min(warmup_opt_steps, total_opt_steps)
+        lr_decay_opt_steps = int(lr_decay_iters) if lr_decay_iters and lr_decay_iters > 0 else total_opt_steps
+        effective_lr_decay_steps = max(lr_decay_opt_steps, warmup_opt_steps + 1)
+
+        def get_lr(it):
+            # Warmup always applies if configured
+            if warmup_opt_steps > 0 and it < warmup_opt_steps:
+                return learning_rate * (it + 1) / (warmup_opt_steps + 1)
+
+            if lr_scheduler_type == "none":
+                return learning_rate
+            if lr_scheduler_type == "cosine":
+                if it >= effective_lr_decay_steps:
+                    return min_lr
+                decay_ratio = (it - warmup_opt_steps) / float(effective_lr_decay_steps - warmup_opt_steps)
+                coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+                return min_lr + coeff * (learning_rate - min_lr)
+            elif lr_scheduler_type == "constant_with_warmup":
+                return learning_rate
+            elif lr_scheduler_type == "linear":
+                if it >= effective_lr_decay_steps:
+                    return min_lr
+                decay_ratio = (it - warmup_opt_steps) / float(effective_lr_decay_steps - warmup_opt_steps)
+                return learning_rate + (min_lr - learning_rate) * decay_ratio
+            elif lr_scheduler_type == "step":
+                if step_size <= 0:
+                    return learning_rate
+                effective_iter_step = max(0, it - warmup_opt_steps)
+                n_decay = effective_iter_step // step_size
+                return max(learning_rate * (step_gamma ** n_decay), min_lr)
+            elif lr_scheduler_type == "polynomial":
+                if it >= effective_lr_decay_steps:
+                    return min_lr
+                progress = float(it - warmup_opt_steps) / float(effective_lr_decay_steps - warmup_opt_steps)
+                poly = (1.0 - progress) ** polynomial_power
+                return (learning_rate - min_lr) * poly + min_lr
+            else:
+                return learning_rate
         
         train_losses = []
         train_steps = []
@@ -732,12 +794,7 @@ def sft_train_generator(
                 labels = labels.to(device)
                 
                 # B3) Learning rate schedule with warmup - use opt_step for proper scaling
-                if opt_step < warmup_opt_steps:
-                    lr = learning_rate * (opt_step + 1) / (warmup_opt_steps + 1)
-                else:
-                    # Cosine decay
-                    progress = (opt_step - warmup_opt_steps) / max(1, total_opt_steps - warmup_opt_steps)
-                    lr = learning_rate * 0.5 * (1 + math.cos(math.pi * progress))
+                lr = get_lr(opt_step)
                 
                 for param_group in optimizer.param_groups:
                     param_group['lr'] = lr
@@ -752,7 +809,8 @@ def sft_train_generator(
                     loss = F.cross_entropy(
                         logits.reshape(-1, logits.size(-1)),
                         labels[:, 1:].reshape(-1),
-                        ignore_index=-100
+                        ignore_index=-100,
+                        label_smoothing=label_smoothing if label_smoothing and label_smoothing > 0 else 0.0,
                     )
                 
                 # B1) Scale loss by gradient accumulation steps for proper gradient averaging
@@ -764,6 +822,9 @@ def sft_train_generator(
                 micro_step += 1
                 
                 if micro_step % gradient_accumulation_steps == 0:
+                    if grad_clip and grad_clip > 0:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                     scaler.step(optimizer)
                     scaler.update()
                     optimizer.zero_grad(set_to_none=True)
@@ -783,19 +844,16 @@ def sft_train_generator(
         # This happens when total_micro_steps is not divisible by gradient_accumulation_steps
         # Skip if training was stopped by user to avoid applying partial gradients
         if not sft_stop_signal and micro_step % gradient_accumulation_steps != 0:
+            if grad_clip and grad_clip > 0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad(set_to_none=True)
             opt_step += 1
         
-        # If stopped by user, don't save checkpoint and exit early
-        if sft_stop_signal:
-            yield (make_progress_html(micro_step, total_micro_steps, 'orange'),
-                   f"SFT training stopped by user at step {micro_step}/{total_micro_steps}",
-                   (train_steps, train_losses, [], []))
-            return
-        
         # Save SFT checkpoint with token mapping for inference
+        # Save even if stopped early by user
         sft_ckpt_path = os.path.join(out_dir, 'ckpt_sft.pt')
         sft_checkpoint = {
             'model': model.state_dict(),
@@ -807,6 +865,17 @@ def sft_train_generator(
                 'max_seq_length': max_seq_length,
                 'system_prompt': system_prompt,
                 'gradient_accumulation_steps': gradient_accumulation_steps,
+                'lr_scheduler_type': lr_scheduler_type,
+                'warmup_iters': warmup_iters,
+                'lr_decay_iters': lr_decay_iters,
+                'min_lr': min_lr,
+                'step_size': step_size,
+                'step_gamma': step_gamma,
+                'polynomial_power': polynomial_power,
+                'label_smoothing': label_smoothing,
+                'freeze_layers': freeze_layers,
+                'grad_clip': grad_clip,
+                'weight_decay': weight_decay,
                 'total_opt_steps': opt_step,
                 'total_samples': num_samples
             },
@@ -816,8 +885,34 @@ def sft_train_generator(
         }
         torch.save(sft_checkpoint, sft_ckpt_path)
         
-        final_msg = f"SFT training complete! Trained for {opt_step} optimizer steps on {num_samples} samples. Checkpoint saved to {sft_ckpt_path}"
-        yield (make_progress_html(total_micro_steps, total_micro_steps, 'green'),
+        # Save SFT loss log to file and database
+        sft_loss_log_path = os.path.join(out_dir, 'sft_loss_log.pkl')
+        with open(sft_loss_log_path, 'wb') as f:
+            pickle.dump({
+                'train_steps': train_steps,
+                'train_losses': train_losses,
+                'val_steps': [],  # SFT doesn't have validation
+                'val_losses': [],
+                'total_opt_steps': opt_step,
+                'total_samples': num_samples,
+                'stopped_early': sft_stop_signal
+            }, f)
+        
+        # Save log path to database if model_id is provided
+        if model_id is not None:
+            dbm.save_sft_log(model_id, sft_loss_log_path)
+        
+        # Generate appropriate final message based on whether training was stopped early
+        if sft_stop_signal:
+            final_msg = f"🛑 SFT training stopped by user at step {micro_step}/{total_micro_steps}. Checkpoint saved to {sft_ckpt_path}"
+            progress_color = 'orange'
+            progress_val = micro_step
+        else:
+            final_msg = f"✅ SFT training complete! Trained for {opt_step} optimizer steps on {num_samples} samples. Checkpoint saved to {sft_ckpt_path}"
+            progress_color = 'green'
+            progress_val = total_micro_steps
+        
+        yield (make_progress_html(progress_val, total_micro_steps, progress_color),
                final_msg,
                (train_steps, train_losses, [], []))
         

@@ -12,6 +12,24 @@ CUSTOM_CSS = """
         white-space:pre-wrap;
         word-break:break-word;
     }
+    #sft-dataset-example{
+        height:240px;
+        display:flex;
+        flex-direction:column;
+    }
+    #sft-dataset-example .cm-editor{
+        flex:1;
+        min-height:0;
+    }
+    #sft-dataset-example .cm-scroller{
+        overflow:auto;
+    }
+    #inf-result-html{
+        background:white !important;
+    }
+    #inf-result-html > div{
+        background:white !important;
+    }
     """
 
 TOKEN_COLORS = [
