@@ -90,9 +90,26 @@ def sft_train_cb(
     step_size, step_gamma, polynomial_power,
     label_smoothing, freeze_layers, grad_clip, weight_decay,
     system_prompt,
+    init_from,
+    save_best_loss_ckpt,
     lang_code,
 ):
     T_current = LANG_JSON[lang_code]
+    log_lines = []
+
+    def _append_log_line(msg: str):
+        if msg is None:
+            return ""
+        msg_s = str(msg)
+        log_lines.append(msg_s)
+        log_html = "<br>".join(log_lines)
+        log_html += (
+            "<script>"
+            "const box=document.getElementById('sft-log-box');"
+            "if(box){box.scrollTop=box.scrollHeight;}"
+            "</script>"
+        )
+        return log_html
 
     # Pre-SFT training cleanup: Clear any residual GPU resources from previous failed training
     try:
@@ -152,6 +169,8 @@ def sft_train_cb(
     grad_clip = safe_float(grad_clip, defaults_sft["grad_clip"])
     weight_decay = safe_float(weight_decay, defaults_sft["weight_decay"])
     lr_scheduler_type = lr_scheduler_type or defaults_sft["lr_scheduler_type"]
+    init_from = init_from or defaults_sft["init_from"]
+    save_best_loss_ckpt = bool(save_best_loss_ckpt)
 
     try:
         if epochs <= 0:
@@ -176,6 +195,8 @@ def sft_train_cb(
             raise ValueError("weight_decay must be non-negative")
         if lr_scheduler_type not in ["none", "cosine", "constant_with_warmup", "linear", "step", "polynomial"]:
             raise ValueError(f"Unsupported lr_scheduler_type: {lr_scheduler_type}")
+        if init_from not in ["scratch", "resume"]:
+            raise ValueError("init_from must be 'scratch' or 'resume'")
     except ValueError as e:
         yield f"<div style='color:red;'>❌ {str(e)}</div>", "", empty_plot
         return
@@ -198,6 +219,8 @@ def sft_train_cb(
         "grad_clip": grad_clip,
         "weight_decay": weight_decay,
         "system_prompt": system_prompt,
+        "init_from": init_from,
+        "save_best_loss_checkpoint": save_best_loss_ckpt,
     }
     dbm.save_sft_config(model_id, sft_cfg)
 
@@ -209,7 +232,8 @@ def sft_train_cb(
     sft_out_dir = os.path.join(model_info["out_dir"], "sft")
     os.makedirs(sft_out_dir, exist_ok=True)
 
-    yield make_progress_html(0, 100), "🚀 Starting SFT Training...", empty_plot
+    start_log_html = _append_log_line("🚀 Starting SFT Training...")
+    yield make_progress_html(0, 100), start_log_html, empty_plot
 
     try:
         generator = sft_train_generator(
@@ -218,6 +242,8 @@ def sft_train_cb(
             dataset=dataset,
             out_dir=sft_out_dir,
             model_id=model_id,
+            init_from=init_from,
+            save_best_loss_checkpoint=save_best_loss_ckpt,
             epochs=int(epochs),
             learning_rate=lr,
             batch_size=int(batch_size),
@@ -246,7 +272,8 @@ def sft_train_cb(
             else:
                 plot_html = empty_plot
 
-            yield progress_html, log_msg, plot_html
+            log_html = _append_log_line(log_msg)
+            yield progress_html, log_html, plot_html
     except Exception as e:
         import traceback
 
@@ -270,7 +297,8 @@ def sft_train_cb(
         except Exception as cleanup_err:
             print(f"Warning: Post-SFT-error cleanup failed: {cleanup_err}")
 
-        yield f"<div style='color:red;'>{err_msg}</div>", "", empty_plot
+        err_log_html = _append_log_line(f"<div style='color:red;'>{err_msg}</div>")
+        yield f"<div style='color:red;'>{err_msg}</div>", err_log_html, empty_plot
 
 
 def sft_stop_cb():

@@ -401,6 +401,8 @@ def sft_train_generator(
     dataset: List[Dict],
     out_dir: str,
     model_id: int = None,
+    init_from: str = DEFAULT_CONFIG["sft"]["init_from"],
+    save_best_loss_checkpoint: bool = DEFAULT_CONFIG["sft"]["save_best_loss_checkpoint"],
     epochs: int = DEFAULT_CONFIG["sft"]["epochs"],
     learning_rate: float = DEFAULT_CONFIG["sft"]["learning_rate"],
     batch_size: int = DEFAULT_CONFIG["sft"]["batch_size"],
@@ -514,16 +516,48 @@ def sft_train_generator(
             return
         
         model_vocab_size = meta.get('vocab_size', 0)
-        
-        # Load base model checkpoint
-        if not os.path.exists(base_model_ckpt_path):
+
+        init_from = (init_from or "scratch").lower()
+        if init_from not in ["scratch", "resume"]:
             yield (make_progress_html(0, 1, 'red'),
-                   f"Error: Base model checkpoint not found: {base_model_ckpt_path}",
+                   f"Error: Invalid init_from '{init_from}'. Choose 'scratch' or 'resume'.",
                    empty_plot_data)
             return
-        
-        checkpoint = torch.load(base_model_ckpt_path, map_location=device)
-        model_args = checkpoint['model_args']
+
+        sft_ckpt_best_path = os.path.join(out_dir, 'ckpt_sft.pt')
+        sft_ckpt_last_path = os.path.join(out_dir, 'ckpt_sft_last.pt')
+        sft_loss_log_path = os.path.join(out_dir, 'sft_loss_log.pkl')
+
+        checkpoint = None
+        resume_checkpoint = None
+        if init_from == "resume":
+            resume_path = None
+            if os.path.exists(sft_ckpt_last_path):
+                resume_path = sft_ckpt_last_path
+            elif os.path.exists(sft_ckpt_best_path):
+                resume_path = sft_ckpt_best_path
+            if not resume_path:
+                yield (make_progress_html(0, 1, 'red'),
+                       f"Error: Cannot resume, no SFT checkpoint found in {out_dir}.",
+                       empty_plot_data)
+                return
+            resume_checkpoint = torch.load(resume_path, map_location=device)
+            checkpoint = resume_checkpoint
+        else:
+            # Load base model checkpoint (scratch start)
+            if not os.path.exists(base_model_ckpt_path):
+                yield (make_progress_html(0, 1, 'red'),
+                       f"Error: Base model checkpoint not found: {base_model_ckpt_path}",
+                       empty_plot_data)
+                return
+            checkpoint = torch.load(base_model_ckpt_path, map_location=device)
+
+        model_args = checkpoint.get('model_args')
+        if model_args is None:
+            yield (make_progress_html(0, 1, 'red'),
+                   "Error: model_args missing from checkpoint.",
+                   empty_plot_data)
+            return
         
         # Determine model type
         is_self_attention_model = any(key in model_args for key in [
@@ -584,6 +618,12 @@ def sft_train_generator(
                 model, weight_decay=weight_decay, learning_rate=learning_rate,
                 betas=(0.9, 0.999), device_type=device_type
             )
+
+        if init_from == "resume" and resume_checkpoint and "optimizer" in resume_checkpoint:
+            try:
+                optimizer.load_state_dict(resume_checkpoint["optimizer"])
+            except Exception as e_optim:
+                print(f"Warning: Could not load optimizer state: {e_optim}. Continuing with fresh optimizer.")
         
         # D1) GradScaler should only be enabled for CUDA + float16
         scaler = torch.cuda.amp.GradScaler(enabled=(device_type == 'cuda' and dtype == 'float16'))
@@ -754,27 +794,98 @@ def sft_train_generator(
         
         train_losses = []
         train_steps = []
-        
+
         micro_step = 0  # Counts every forward pass
         opt_step = 0    # Counts optimizer updates (every gradient_accumulation_steps)
-        
+        best_train_loss = float("inf")
+
+        if init_from == "resume":
+            if os.path.exists(sft_loss_log_path):
+                try:
+                    with open(sft_loss_log_path, 'rb') as f:
+                        sft_log_loaded = pickle.load(f)
+                    train_steps = sft_log_loaded.get('train_steps', []) or []
+                    train_losses = sft_log_loaded.get('train_losses', []) or []
+                except Exception as e_log:
+                    print(f"Warning: Failed to load SFT loss log for resume: {e_log}")
+
+            if resume_checkpoint:
+                micro_step = int(resume_checkpoint.get('micro_step', 0) or 0)
+                opt_step = int(resume_checkpoint.get('opt_step', 0) or 0)
+                best_train_loss = resume_checkpoint.get('best_loss', float("inf"))
+
+            if (best_train_loss is None or best_train_loss == float("inf")) and os.path.exists(sft_ckpt_best_path):
+                try:
+                    best_ckpt_loaded = torch.load(sft_ckpt_best_path, map_location="cpu")
+                    best_train_loss = best_ckpt_loaded.get('best_loss', best_train_loss)
+                except Exception as e_best:
+                    print(f"Warning: Failed to read best loss from checkpoint: {e_best}")
+
+            if train_steps:
+                last_logged_step = train_steps[-1]
+                if last_logged_step > micro_step:
+                    micro_step = last_logged_step
+                if train_losses:
+                    min_logged = min(train_losses)
+                    if best_train_loss is None or best_train_loss == float("inf") or min_logged < best_train_loss:
+                        best_train_loss = min_logged
+
+            if opt_step <= 0 and micro_step > 0:
+                opt_step = micro_step // gradient_accumulation_steps
+
+        if best_train_loss is None:
+            best_train_loss = float("inf")
+
+        if init_from == "resume" and micro_step > 0:
+            if best_train_loss < float("inf"):
+                initial_log = f"Resumed at step {micro_step}. Best loss: {best_train_loss:.4f}"
+            else:
+                initial_log = f"Resumed at step {micro_step}."
+            yield (make_progress_html(micro_step, total_micro_steps), initial_log,
+                   (train_steps[:], train_losses[:], [], []))
+
+        if init_from == "resume" and micro_step >= total_micro_steps:
+            done_msg = f"SFT already completed ({micro_step}/{total_micro_steps} steps)."
+            yield (make_progress_html(total_micro_steps, total_micro_steps, 'green'),
+                   done_msg, (train_steps[:], train_losses[:], [], []))
+            return
+
+        start_epoch = 0
+        start_batch_idx = 0
+        if init_from == "resume" and micro_step > 0:
+            start_epoch = micro_step // steps_per_epoch
+            start_batch_idx = micro_step % steps_per_epoch
+            if start_epoch >= epochs:
+                done_msg = f"SFT already completed ({micro_step}/{total_micro_steps} steps)."
+                yield (make_progress_html(total_micro_steps, total_micro_steps, 'green'),
+                       done_msg, (train_steps[:], train_losses[:], [], []))
+                return
+
         # Create indices for shuffling (to avoid shuffling the cached data directly)
         sample_indices = list(range(num_samples))
-        
-        for epoch in range(epochs):
+
+        for epoch in range(start_epoch, epochs):
             if sft_stop_signal:
                 break
-            
+
             # Shuffle indices instead of dataset
             np.random.shuffle(sample_indices)
-            
-            for batch_start in range(0, num_samples, batch_size):
+
+            batch_start_idx = start_batch_idx if epoch == start_epoch else 0
+            for batch_idx in range(batch_start_idx, steps_per_epoch):
                 if sft_stop_signal:
                     yield (make_progress_html(micro_step, total_micro_steps, 'orange'),
                            "SFT training stopped by user",
                            (train_steps, train_losses, [], []))
                     break
-                
+
+                if micro_step >= total_micro_steps:
+                    break
+
+                batch_start = batch_idx * batch_size
+                if batch_start >= num_samples:
+                    break
+
                 batch_end = min(batch_start + batch_size, num_samples)
                 batch_indices = sample_indices[batch_start:batch_end]
                 
@@ -833,12 +944,57 @@ def sft_train_generator(
                 loss_val = loss.item()  # Log unscaled loss for interpretability
                 train_losses.append(loss_val)
                 train_steps.append(micro_step)
+
+                if loss_val < best_train_loss:
+                    best_train_loss = loss_val
+                    if save_best_loss_checkpoint:
+                        ckpt_best = {
+                            'model': model.state_dict(),
+                            'optimizer': optimizer.state_dict(),
+                            'model_args': model_args,
+                            'sft_config': {
+                                'epochs': epochs,
+                                'learning_rate': learning_rate,
+                                'batch_size': batch_size,
+                                'max_seq_length': max_seq_length,
+                                'system_prompt': system_prompt,
+                                'gradient_accumulation_steps': gradient_accumulation_steps,
+                                'lr_scheduler_type': lr_scheduler_type,
+                                'warmup_iters': warmup_iters,
+                                'lr_decay_iters': lr_decay_iters,
+                                'min_lr': min_lr,
+                                'step_size': step_size,
+                                'step_gamma': step_gamma,
+                                'polynomial_power': polynomial_power,
+                                'label_smoothing': label_smoothing,
+                                'freeze_layers': freeze_layers,
+                                'grad_clip': grad_clip,
+                                'weight_decay': weight_decay,
+                                'total_opt_steps': opt_step,
+                                'total_samples': num_samples,
+                                'init_from': init_from,
+                                'save_best_loss_checkpoint': save_best_loss_checkpoint,
+                            },
+                            'is_sft': True,
+                            'old2new_mapping': old2new_mapping,
+                            'new2old_mapping': {v: k for k, v in old2new_mapping.items()},
+                            'micro_step': micro_step,
+                            'opt_step': opt_step,
+                            'best_loss': best_train_loss,
+                        }
+                        torch.save(ckpt_best, sft_ckpt_best_path)
+                        print(f"New best loss={best_train_loss:.4f} at step {micro_step}, checkpoint saved.")
                 
                 # Log every 10 micro steps
                 if micro_step % 10 == 0:
                     progress_html = make_progress_html(micro_step, total_micro_steps)
                     log_msg = f"Epoch {epoch+1}/{epochs}, Step {micro_step}/{total_micro_steps}, OptStep {opt_step}/{total_opt_steps}, Loss: {loss_val:.4f}, LR: {lr:.2e}"
                     yield (progress_html, log_msg, (train_steps[:], train_losses[:], [], []))
+
+            start_batch_idx = 0
+
+            if micro_step >= total_micro_steps:
+                break
         
         # B2) Handle remaining gradients that haven't been applied
         # This happens when total_micro_steps is not divisible by gradient_accumulation_steps
@@ -852,11 +1008,10 @@ def sft_train_generator(
             optimizer.zero_grad(set_to_none=True)
             opt_step += 1
         
-        # Save SFT checkpoint with token mapping for inference
-        # Save even if stopped early by user
-        sft_ckpt_path = os.path.join(out_dir, 'ckpt_sft.pt')
+        # Save SFT checkpoints (best and last)
         sft_checkpoint = {
             'model': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
             'model_args': model_args,
             'sft_config': {
                 'epochs': epochs,
@@ -877,16 +1032,25 @@ def sft_train_generator(
                 'grad_clip': grad_clip,
                 'weight_decay': weight_decay,
                 'total_opt_steps': opt_step,
-                'total_samples': num_samples
+                'total_samples': num_samples,
+                'init_from': init_from,
+                'save_best_loss_checkpoint': save_best_loss_checkpoint,
             },
             'is_sft': True,
             'old2new_mapping': old2new_mapping,  # Token ID remapping for inference
-            'new2old_mapping': {v: k for k, v in old2new_mapping.items()}  # Reverse mapping for decoding
+            'new2old_mapping': {v: k for k, v in old2new_mapping.items()},  # Reverse mapping for decoding
+            'micro_step': micro_step,
+            'opt_step': opt_step,
+            'best_loss': best_train_loss,
         }
-        torch.save(sft_checkpoint, sft_ckpt_path)
+        torch.save(sft_checkpoint, sft_ckpt_last_path)
+        if save_best_loss_checkpoint:
+            if not os.path.exists(sft_ckpt_best_path):
+                torch.save(sft_checkpoint, sft_ckpt_best_path)
+        else:
+            torch.save(sft_checkpoint, sft_ckpt_best_path)
         
         # Save SFT loss log to file and database
-        sft_loss_log_path = os.path.join(out_dir, 'sft_loss_log.pkl')
         with open(sft_loss_log_path, 'wb') as f:
             pickle.dump({
                 'train_steps': train_steps,
@@ -895,7 +1059,8 @@ def sft_train_generator(
                 'val_losses': [],
                 'total_opt_steps': opt_step,
                 'total_samples': num_samples,
-                'stopped_early': sft_stop_signal
+                'stopped_early': sft_stop_signal,
+                'best_loss': best_train_loss,
             }, f)
         
         # Save log path to database if model_id is provided
@@ -903,12 +1068,29 @@ def sft_train_generator(
             dbm.save_sft_log(model_id, sft_loss_log_path)
         
         # Generate appropriate final message based on whether training was stopped early
+        if save_best_loss_checkpoint:
+            ckpt_msg_suffix = (
+                f"Last checkpoint: {sft_ckpt_last_path}<br>"
+                f"Best checkpoint: {sft_ckpt_best_path}"
+            )
+        else:
+            ckpt_msg_suffix = (
+                f"Last checkpoint: {sft_ckpt_last_path}<br>"
+                f"Best checkpoint: {sft_ckpt_best_path}"
+            )
+
         if sft_stop_signal:
-            final_msg = f"🛑 SFT training stopped by user at step {micro_step}/{total_micro_steps}. Checkpoint saved to {sft_ckpt_path}"
+            final_msg = (
+                f"🛑 SFT training stopped by user at step {micro_step}/{total_micro_steps}.<br>"
+                f"{ckpt_msg_suffix}"
+            )
             progress_color = 'orange'
             progress_val = micro_step
         else:
-            final_msg = f"✅ SFT training complete! Trained for {opt_step} optimizer steps on {num_samples} samples. Checkpoint saved to {sft_ckpt_path}"
+            final_msg = (
+                f"✅ SFT training complete! Trained for {opt_step} optimizer steps on {num_samples} samples.<br>"
+                f"{ckpt_msg_suffix}"
+            )
             progress_color = 'green'
             progress_val = total_micro_steps
         

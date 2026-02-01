@@ -1,16 +1,22 @@
 CUSTOM_CSS = """
     .gradio-container{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,'Open Sans','Helvetica Neue',sans-serif;}
     progress{width:100%;height:20px;margin:4px 0;}
-    #train-log-box{
-        height:300px;
+    #train-log-box,
+    #sft-log-box{
+        height:450px;
         overflow-y:auto !important;
         display:block !important;
         font-family:monospace;
         padding:8px;
-        background:white;
-        border:1px solid #ddd;
+        background:white !important;
+        border:1px solid #ddd !important;
         white-space:pre-wrap;
         word-break:break-word;
+        scroll-behavior:smooth;
+    }
+    #train-log-box > div,
+    #sft-log-box > div{
+        background:transparent !important;
     }
     #sft-dataset-example{
         height:240px;

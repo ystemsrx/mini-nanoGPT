@@ -144,6 +144,8 @@ def _reset_updates():
         update_sft_lr_scheduler_params(d_sft["lr_scheduler_type"])
     )
     sft_updates = [
+        _d(d_sft["init_from"]),
+        _b(d_sft["save_best_loss_checkpoint"]),
         _d(d_sft["epochs"]),
         _d(d_sft["learning_rate"]),
         _d(d_sft["batch_size"]),
@@ -410,7 +412,6 @@ def select_model_cb(sel: str):
             log_lines = []
             if sft_tr_steps:
                 status = "🛑 stopped early" if stopped_early else "✅ completed"
-                log_lines.append(f"<div style='font-family: monospace; padding: 10px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e0e0e0;'>")
                 log_lines.append(f"<b>SFT Training History ({status})</b><br>")
                 log_lines.append(f"Total optimizer steps: {total_opt_steps}, Samples: {total_samples}<br><br>")
                 for i, (step, loss) in enumerate(zip(sft_tr_steps, sft_tr_losses)):
@@ -418,12 +419,13 @@ def select_model_cb(sel: str):
                     if i >= 199:
                         log_lines.append(f"<i>... (showing first 200 of {len(sft_tr_steps)} records)</i>")
                         break
-                log_lines.append("</div>")
             sft_log_s = "".join(log_lines)
         except Exception as e_sft_log:
             sft_log_s = f"Error loading SFT log: {str(e_sft_log)}"
 
     sft_updates = [
+        gr.update(value=_sft("init_from", d_sft_defaults["init_from"])),
+        gr.update(value=bool(_sft("save_best_loss_checkpoint", d_sft_defaults["save_best_loss_checkpoint"]))),
         gr.update(value=_sft("epochs", d_sft_defaults["epochs"])),
         gr.update(value=_sft("learning_rate", d_sft_defaults["learning_rate"])),
         gr.update(value=_sft("batch_size", d_sft_defaults["batch_size"])),

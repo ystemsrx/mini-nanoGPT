@@ -413,6 +413,17 @@ def build_app_interface(selected_lang: str = "zh"):
                 # Store loaded dataset in state
                 sft_dataset_state = gr.State(value=[])
 
+                with gr.Row():
+                    sft_init_from = gr.Dropdown(
+                        label=T["sft_init_from"],
+                        choices=["scratch", "resume"],
+                        value=DEFAULT_CONFIG["sft"]["init_from"],
+                    )
+                    sft_save_best_loss_ckpt = gr.Checkbox(
+                        label=T["sft_save_best_loss_ckpt"],
+                        value=DEFAULT_CONFIG["sft"]["save_best_loss_checkpoint"],
+                    )
+
                 with gr.Accordion(T["sft_basic_params"], open=True) as sft_basic_params_accordion:
                     with gr.Row():
                         with gr.Column():
@@ -975,6 +986,8 @@ def build_app_interface(selected_lang: str = "zh"):
             comp_right_data_dir,
             comp_right_out_dir,
             # SFT params (per-model persistence)
+            sft_init_from,
+            sft_save_best_loss_ckpt,
             sft_epochs,
             sft_learning_rate,
             sft_batch_size,
@@ -1137,6 +1150,8 @@ def build_app_interface(selected_lang: str = "zh"):
             sft_dataset_dir,
             sft_format_status,
             sft_validate_btn,
+            sft_init_from,
+            sft_save_best_loss_ckpt,
             sft_epochs,
             sft_learning_rate,
             sft_batch_size,
@@ -1236,6 +1251,8 @@ def build_app_interface(selected_lang: str = "zh"):
             sft_grad_clip,
             sft_weight_decay,
             sft_system_prompt,
+            sft_init_from,
+            sft_save_best_loss_ckpt,
             sft_progress,
             sft_log,
             sft_plot,

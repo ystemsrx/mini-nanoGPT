@@ -152,6 +152,8 @@ def switch_language(lang_code: str):
         gr.update(label=Tn["sft_dataset_dir"]),
         gr.update(label=Tn["sft_format_status"]),
         gr.update(value=Tn["sft_validate_btn"]),
+        gr.update(label=Tn["sft_init_from"]),
+        gr.update(label=Tn["sft_save_best_loss_ckpt"]),
         gr.update(label=Tn["sft_epochs"]),
         gr.update(label=Tn["sft_learning_rate"]),
         gr.update(label=Tn["sft_batch_size"]),
