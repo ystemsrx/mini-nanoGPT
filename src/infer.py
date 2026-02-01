@@ -84,8 +84,20 @@ def generate_text(
         return
 
     try:
+        # Set random seed using Generator for thread-safe deterministic sampling
+        # Create a dedicated generator to avoid interference from other threads or code
+        rng_generator = torch.Generator(device='cpu')
+        rng_generator.manual_seed(seed)
+        
+        # Also set global seeds for operations that may use global RNG
         torch.manual_seed(seed)
-        torch.cuda.manual_seed(seed)
+        if 'cuda' in device:
+            torch.cuda.manual_seed(seed)
+            # Create CUDA generator for GPU operations
+            cuda_rng_generator = torch.Generator(device=device)
+            cuda_rng_generator.manual_seed(seed)
+        else:
+            cuda_rng_generator = None
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
@@ -298,6 +310,13 @@ def generate_text(
         with torch.no_grad():
             with ctx:
                 for s_i in range(num_samples):
+                    # Reset generator seed for each sample to ensure reproducibility
+                    # Each sample uses seed + sample_index for deterministic but different results
+                    sample_seed = seed + s_i
+                    rng_generator.manual_seed(sample_seed)
+                    if cuda_rng_generator is not None:
+                        cuda_rng_generator.manual_seed(sample_seed)
+                    
                     # Output title at the start of each sample.
                     sample_header = f"Sample {s_i+1}:\n"
                     yield sample_header
@@ -325,7 +344,14 @@ def generate_text(
                             top_value = v[:, -1].unsqueeze(-1)
                             logits[logits < top_value] = -float('Inf')
                         probs = F.softmax(logits, dim=-1)
-                        idx_next = torch.multinomial(probs, num_samples=1)
+                        # Use dedicated generator for thread-safe deterministic sampling
+                        if cuda_rng_generator is not None and probs.device.type == 'cuda':
+                            idx_next = torch.multinomial(probs, num_samples=1, generator=cuda_rng_generator)
+                        else:
+                            # For CPU or when CUDA generator not available, use CPU generator
+                            probs_cpu = probs.cpu()
+                            idx_next_cpu = torch.multinomial(probs_cpu, num_samples=1, generator=rng_generator)
+                            idx_next = idx_next_cpu.to(probs.device)
                         idx = torch.cat((idx, idx_next), dim=1)
 
                         # Add the newly generated token to the list.

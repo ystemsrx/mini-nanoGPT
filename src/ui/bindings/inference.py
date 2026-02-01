@@ -99,3 +99,11 @@ def bind_inference(
         inputs=[model_dropdown],
         outputs=[chatbot, chat_advanced_output],
     )
+
+    # Also handle the built-in clear button (trash icon) in the Chatbot component
+    # This ensures database history is also cleared when user clicks the trash icon
+    chatbot.clear(
+        fn=clear_chat,
+        inputs=[model_dropdown],
+        outputs=[chatbot, chat_advanced_output],
+    )

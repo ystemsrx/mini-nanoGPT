@@ -1115,7 +1115,8 @@ def chat_generate(
     old2new_mapping: Dict[int, int] = None,
     new2old_mapping: Dict[int, int] = None,
     return_detailed_info: bool = False,
-    history_token_ids: List[int] = None
+    history_token_ids: List[int] = None,
+    seed: int = None
 ) -> Generator[str, None, None]:
     """
     Generate chat response using Qwen template.
@@ -1134,6 +1135,7 @@ def chat_generate(
         history_token_ids: Pre-computed token IDs from previous conversation turns (in model's vocabulary).
                           If provided, only the last user message is tokenized; history uses these IDs directly.
                           This avoids re-tokenization issues where tokenizer might merge tokens differently.
+        seed: Random seed for reproducible sampling. If None, sampling is non-deterministic.
     
     Yields tokens as they are generated. If return_detailed_info is True, yields
     tuples of (text, token_detail) where token_detail contains top-5 candidates.
@@ -1144,6 +1146,16 @@ def chat_generate(
     # Get device from model parameters to avoid device mismatch
     # This ensures tensors are created on the same device as the model
     device = next(model.parameters()).device
+    
+    # Set up random generator for deterministic sampling if seed is provided
+    rng_generator = None
+    cuda_rng_generator = None
+    if seed is not None:
+        rng_generator = torch.Generator(device='cpu')
+        rng_generator.manual_seed(seed)
+        if device.type == 'cuda':
+            cuda_rng_generator = torch.Generator(device=device)
+            cuda_rng_generator.manual_seed(seed)
     
     # Defensive checks for sampling parameters
     # Temperature must be positive to avoid division by zero
@@ -1320,7 +1332,17 @@ def chat_generate(
                 logits[logits < v[:, -1].unsqueeze(-1)] = -float('Inf')
             
             probs = F.softmax(logits, dim=-1)
-            idx_next = torch.multinomial(probs, num_samples=1)
+            # Use dedicated generator for thread-safe deterministic sampling if seed was provided
+            if cuda_rng_generator is not None and probs.device.type == 'cuda':
+                idx_next = torch.multinomial(probs, num_samples=1, generator=cuda_rng_generator)
+            elif rng_generator is not None:
+                # For CPU or when CUDA generator not available, use CPU generator
+                probs_cpu = probs.cpu()
+                idx_next_cpu = torch.multinomial(probs_cpu, num_samples=1, generator=rng_generator)
+                idx_next = idx_next_cpu.to(probs.device)
+            else:
+                # No seed provided, use default (non-deterministic) sampling
+                idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
             
             new_token_id = idx_next[0].item()

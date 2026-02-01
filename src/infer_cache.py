@@ -504,12 +504,22 @@ def cached_generate_text(
         if model_id is None:
             model_id = dbm.register_model(model_name_for_db, model_dir_for_db)
 
-        # Set random seed
+        # Set random seed using Generator for thread-safe deterministic sampling
+        # Create a dedicated generator to avoid interference from other threads or code
+        rng_generator = torch.Generator(device='cpu')
+        rng_generator.manual_seed(seed)
+        
+        # Also set global seeds for operations that may use global RNG (e.g., model initialization)
         torch.manual_seed(seed)
         if 'cuda' in device:
             torch.cuda.manual_seed(seed)
+            # Create CUDA generator for GPU operations
+            cuda_rng_generator = torch.Generator(device=device)
+            cuda_rng_generator.manual_seed(seed)
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
+        else:
+            cuda_rng_generator = None
         
         # Extract device type for autocast - always use 'cuda' for any CUDA device
         device_type = 'cuda' if 'cuda' in device else 'cpu'
@@ -554,6 +564,13 @@ def cached_generate_text(
         with torch.no_grad():
             with ctx:
                 for s_i in range(num_samples):
+                    # Reset generator seed for each sample to ensure reproducibility
+                    # Each sample uses seed + sample_index for deterministic but different results
+                    sample_seed = seed + s_i
+                    rng_generator.manual_seed(sample_seed)
+                    if cuda_rng_generator is not None:
+                        cuda_rng_generator.manual_seed(sample_seed)
+                    
                     sample_header = f"Sample {s_i+1}:\n"
                     if return_detailed_info:
                         yield (sample_header, None)
@@ -610,7 +627,15 @@ def cached_generate_text(
                             logits[logits < top_value] = -float('Inf')
                         
                         probs = F.softmax(logits, dim=-1)
-                        idx_next = torch.multinomial(probs, num_samples=1)
+                        # Use dedicated generator for thread-safe deterministic sampling
+                        # Move probs to CPU for sampling if using CPU generator, then move result back
+                        if cuda_rng_generator is not None and probs.device.type == 'cuda':
+                            idx_next = torch.multinomial(probs, num_samples=1, generator=cuda_rng_generator)
+                        else:
+                            # For CPU or when CUDA generator not available, use CPU generator
+                            probs_cpu = probs.cpu()
+                            idx_next_cpu = torch.multinomial(probs_cpu, num_samples=1, generator=rng_generator)
+                            idx_next = idx_next_cpu.to(probs.device)
                         idx = torch.cat((idx, idx_next), dim=1)
                         
                         selected_token_id = idx_next[0].item()

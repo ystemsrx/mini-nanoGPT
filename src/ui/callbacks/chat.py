@@ -170,12 +170,11 @@ def chat_cb(user_msg, history, model_sel, sys_prompt, max_tokens, temp, top_k, s
 
         messages.append({"role": "user", "content": user_msg})
 
-        # Set random seed for reproducibility
-        torch.manual_seed(int(seed))
-        if "cuda" in device_val:
-            torch.cuda.manual_seed(int(seed))
+        # Convert seed to int for the generator
+        seed_int = int(seed)
 
         # Generate with proper token ID mappings and detailed info
+        # Pass seed directly to chat_generate for thread-safe deterministic sampling
         generator = chat_generate(
             model=model,
             tokenizer=tokenizer,
@@ -188,6 +187,7 @@ def chat_cb(user_msg, history, model_sel, sys_prompt, max_tokens, temp, top_k, s
             new2old_mapping=new2old_mapping,
             return_detailed_info=True,
             history_token_ids=history_token_ids,
+            seed=seed_int,
         )
 
         all_token_details = []
