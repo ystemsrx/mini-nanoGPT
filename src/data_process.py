@@ -2,6 +2,7 @@
 import os
 import pickle
 import math
+import json
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
 
@@ -13,6 +14,131 @@ from src.db_manager import DBManager
 from src.utils import compose_model_dirs
 
 dbm = DBManager()
+
+# =============================================================================
+# Supported Data Formats
+# =============================================================================
+SUPPORTED_EXTENSIONS = {'.txt', '.jsonl'}
+
+
+def load_text_file(file_path: Path) -> list[str]:
+    """
+    Load a plain text file and return its content as a single document.
+    
+    Args:
+        file_path: Path to the .txt file
+        
+    Returns:
+        List containing the file content as a single document
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read().strip()
+            if content:
+                return [content]
+    except Exception as e:
+        print(f"Warning: Could not read file {file_path}: {e}")
+    return []
+
+
+def load_jsonl_file(file_path: Path) -> list[str]:
+    """
+    Load a JSONL file where each line contains a JSON object with a "text" field.
+    Each line is treated as a separate document that will get an EOT token appended.
+    
+    Expected format:
+        {"text": "document content 1"}
+        {"text": "document content 2"}
+        ...
+    
+    Args:
+        file_path: Path to the .jsonl file
+        
+    Returns:
+        List of text contents extracted from the JSONL file
+    """
+    documents = []
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:  # Skip empty lines
+                    continue
+                try:
+                    obj = json.loads(line)
+                    if isinstance(obj, dict) and 'text' in obj:
+                        text = obj['text']
+                        if isinstance(text, str) and text.strip():
+                            documents.append(text.strip())
+                    else:
+                        print(f"Warning: Line {line_num} in {file_path} does not contain a 'text' field, skipping")
+                except json.JSONDecodeError as e:
+                    print(f"Warning: Invalid JSON at line {line_num} in {file_path}: {e}")
+    except Exception as e:
+        print(f"Warning: Could not read file {file_path}: {e}")
+    return documents
+
+
+def load_documents_from_directory(directory: str | Path) -> tuple[list[str], dict]:
+    """
+    Recursively load all supported files from a directory and its subdirectories.
+    
+    Supported formats:
+        - .txt: Plain text files (entire file as one document)
+        - .jsonl: JSON Lines files with {"text": "..."} format (each line as one document)
+    
+    Args:
+        directory: Path to the directory to scan
+        
+    Returns:
+        A tuple of (documents, stats) where:
+            - documents: List of text documents extracted from files
+            - stats: Dictionary with file processing statistics
+    """
+    directory = Path(directory)
+    documents = []
+    stats = {
+        'total_files': 0,
+        'txt_files': 0,
+        'jsonl_files': 0,
+        'failed_files': 0,
+        'total_documents': 0
+    }
+    
+    # Recursively find all supported files
+    for ext in SUPPORTED_EXTENSIONS:
+        for file_path in sorted(directory.rglob(f'*{ext}')):
+            if not file_path.is_file():
+                continue
+                
+            stats['total_files'] += 1
+            
+            if ext == '.txt':
+                file_docs = load_text_file(file_path)
+                if file_docs:
+                    stats['txt_files'] += 1
+                    documents.extend(file_docs)
+                else:
+                    stats['failed_files'] += 1
+            elif ext == '.jsonl':
+                file_docs = load_jsonl_file(file_path)
+                if file_docs:
+                    stats['jsonl_files'] += 1
+                    documents.extend(file_docs)
+                else:
+                    stats['failed_files'] += 1
+    
+    stats['total_documents'] = len(documents)
+    
+    # Print summary
+    print(f"Directory scan complete:")
+    print(f"  - Total files found: {stats['total_files']}")
+    print(f"  - TXT files processed: {stats['txt_files']}")
+    print(f"  - JSONL files processed: {stats['jsonl_files']}")
+    print(f"  - Failed files: {stats['failed_files']}")
+    print(f"  - Total documents extracted: {stats['total_documents']}")
+    
+    return documents, stats
 
 # =============================================================================
 # SFT Chat Template Required Tokens (Qwen format)
@@ -183,16 +309,8 @@ def process_data(
     elif input_dir.strip():
         input_dir_abs = input_dir.strip()
         if os.path.exists(input_dir_abs):
-            # Load each .txt file as a separate document
-            txt_files = sorted(f for f in os.listdir(input_dir_abs) if f.endswith(".txt"))
-            for fn in txt_files:
-                try:
-                    with open(os.path.join(input_dir_abs, fn), "r", encoding="utf-8") as f_in:
-                        content = f_in.read().strip()
-                        if content:  # Only add non-empty documents
-                            documents.append(content)
-                except Exception as e:
-                    print(f"Warning: Could not read file {fn}: {e}")
+            # Recursively load all supported files (.txt, .jsonl) from directory and subdirectories
+            documents, load_stats = load_documents_from_directory(input_dir_abs)
             is_multi_document = len(documents) > 1
     
     # Validate data BEFORE registering new model to database

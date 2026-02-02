@@ -145,6 +145,34 @@ Navigate to the **"Data Processing"** page, paste your training text, and choose
 
 Click **"Start Processing"** when you're done.
 
+#### Supported Data Formats
+
+You can provide training data in multiple ways:
+
+| Method | Description |
+|--------|-------------|
+| **Direct Input** | Paste text directly into the text box |
+| **Directory Input** | Specify a directory path containing your data files |
+
+**Directory Mode** supports **recursive scanning** of all subdirectories and the following file formats:
+
+- **`.txt`** — Plain text files (entire file as one document)
+- **`.jsonl`** — JSON Lines format with `{"text": "..."}` structure
+
+<details>
+<summary>📝 <strong>JSONL Format Example</strong></summary>
+
+```jsonl
+{"text": "This is the first document content."}
+{"text": "This is the second document content."}
+{"text": "Each line is treated as a separate document with EOT token appended."}
+```
+
+</details>
+
+> [!NOTE]
+> When using directory input, files of different formats (.txt and .jsonl) can be mixed in the same directory structure. All files will be processed correctly.
+
 <details>
 <summary>📸 <strong>View Screenshot</strong></summary>
 <br/>
