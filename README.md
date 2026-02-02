@@ -1,51 +1,103 @@
-[**English**](https://github.com/ystemsrx/mini-nanoGPT) | [简体中文](README.zh.md)
+<div align="center">
 
-# Mini NanoGPT 🚀
+<a href="https://github.com/ystemsrx/mini-nanoGPT">
+  <img src="https://img.shields.io/badge/NanoGPT-Mini-blueviolet?style=for-the-badge&logo=openai&logoColor=white" alt="Mini NanoGPT" height="30"/>
+</a>
 
-#### Training a GPT can really be this simple?
+# 🚀 Mini NanoGPT
 
-> Make GPT training fun and approachable! A visual training platform based on [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT).
+### *Training a GPT can really be this simple!*
+
+[![Python](https://img.shields.io/badge/Python-3.7%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org)
+[![Gradio](https://img.shields.io/badge/Gradio-UI-FF6F00?style=flat-square&logo=gradio&logoColor=white)](https://gradio.app)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://docker.com)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+
+<p>
+  <a href="https://github.com/ystemsrx/mini-nanoGPT"><strong>English</strong></a>
+  ·
+  <a href="README.zh.md">简体中文</a>
+</p>
+
+<p>A visualized training platform upgraded from <a href="https://github.com/karpathy/nanoGPT">karpathy/nanoGPT</a>. <br/>Make GPT training fun and approachable!</p>
+
+</div>
+
+---
 
 ## 📖 What is this?
 
 Mini-NanoGPT is a tool that helps you get started with training GPT models effortlessly. Whether you're:
 
-* 🎓 A beginner in deep learning
-* 👨‍🔬 A researcher
-* 🛠️ A developer
+| 🎓 Beginner | 👨‍🔬 Researcher | 🛠️ Developer |
+|:---:|:---:|:---:|
+| Just starting deep learning | Experimenting with LLM architectures | Building AI-powered applications |
 
-Or simply curious about large language models and want to experience their magic,
+Or simply curious about large language models and want to experience their magic — you can train a model through an intuitive graphical interface!
 
-You can train a model through an intuitive graphical interface!
-
+> [!NOTE]
 > For the original version of Mini NanoGPT (no longer updated), please check out the [**old** branch](https://github.com/ystemsrx/mini-nanoGPT/tree/old).
+
+---
 
 ## ✨ Key Features
 
-### 1. Easy to Use
+<table>
+<tr>
+<td width="50%">
 
-* 📱 **Visual Interface**: Say goodbye to command line; point-and-click to start training
-* 🌍 **Bilingual UI**: Full support for both English and Chinese interfaces
-* 🎯 **One-click Operations**: Data preprocessing, training, and text generation — all in one click
+### 🎯 Easy to Use
 
-### 2. Powerful Features
+- 📱 **Visual Interface** — Say goodbye to command line
+- 🌍 **Bilingual UI** — Full English & Chinese support
+- 🖱️ **One-click Operations** — Data processing, training, and generation
 
-* 🔤 **Flexible Tokenization**: Supports character-level and GPT-2/Qwen tokenizers, with multilingual support
-* 🚄 **Efficient Training**: Supports multi-process acceleration and distributed training
-* 📊 **Real-time Feedback**: Live display of training progress and performance
-* ⚙️ **Parameter Visualization**: All training parameters can be adjusted directly in the UI
-* 🧩 **Model Database**: Easily manage models and reuse training settings anytime
+</td>
+<td width="50%">
+
+### ⚡ Powerful Features
+
+- 🔤 **Flexible Tokenization** — Character-level, GPT-2, or Qwen tokenizers
+- 🚄 **Efficient Training** — Multi-process acceleration & distributed training
+- 📊 **Real-time Feedback** — Live training progress and loss curves
+
+</td>
+</tr>
+<tr>
+<td>
+
+### 🧩 Model Management
+
+- ⚙️ **Parameter Visualization** — Adjust all training parameters in UI
+- 🗄️ **Model Database** — Easily manage and reuse training settings
+- 📂 **Checkpoint Support** — Resume training from any saved state
+
+</td>
+<td>
+
+### 🎓 SFT Training
+
+- 💬 **Supervised Fine-Tuning** — Train conversational AI models
+- 📋 **Alpaca Format** — Standard dataset format support
+- 🤖 **Chat Inference** — Interactive conversation with fine-tuned models
+
+</td>
+</tr>
+</table>
+
+---
 
 ## 🚀 Getting Started
 
 ### Option 1: Docker Deployment (Recommended) 🐳
 
-The easiest way to get started!
+> The easiest way to get started!
 
 ```bash
 # Clone the repository
 git clone --depth 1 https://github.com/ystemsrx/mini-nanoGPT.git
-cd mini-nanogpt
+cd mini-nanoGPT
 
 # Start with Docker Compose (recommended)
 docker-compose up --build
@@ -55,116 +107,221 @@ docker build -t mini-nanogpt .
 docker run --gpus all -p 7860:7860 -v $(pwd)/data:/app/data mini-nanogpt
 ```
 
-This will automatically build the Docker image and run the container. The container will automatically detect your system environment (CPU/GPU). Meanwhile, the `data`, `models`, and `assets` directories in the current working directory will be mounted into the container, allowing you to store data directly in these directories.
+This will automatically build the Docker image and run the container. The container will detect your system environment (CPU/GPU) automatically. The `data`, `models`, and `assets` directories in the current working directory will be mounted into the container.
 
-Once started, visit http://localhost:7860 to access the application.
+🌐 Once started, visit **http://localhost:7860** to access the application.
+
+For more details, please refer to [Docker Setup](docker/README.md).
+
+---
 
 ### Option 2: Local Installation
 
 ```bash
 # Clone the repository
 git clone --depth 1 https://github.com/ystemsrx/mini-nanoGPT.git
-cd mini-nanogpt
+cd mini-nanoGPT
 
 # Install dependencies (Python 3.7+)
 pip install -r requirements.txt
-```
 
-### 2. Launch the App
-
-```bash
+# Launch the app
 python app.py
 ```
 
-Open the displayed link in your browser (usually [http://localhost:7860](http://localhost:7860)) to see the training interface!
+Open **http://localhost:7860** in your browser to see the training interface!
+
+---
 
 ## 🎮 User Guide
 
 ### Step 1: Prepare Data
 
-* Open the "Data Processing" page, paste your training text, and choose a tokenization method. For better results, check the option to use a tokenizer — it will automatically build a vocabulary based on your text.
-* If you don't want to use a validation set, check the "Skip validation set" option.
-* Click "Start Processing" when you're done.
+Navigate to the **"Data Processing"** page, paste your training text, and choose a tokenization method.
 
-Here's a small example for demonstration:
+> [!TIP]
+> - For better results, enable the tokenizer option — it will automatically build a vocabulary based on your text
+> - If you don't want to use a validation set, check the "Skip validation set" option
 
-![Data Processing](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/imgs/en_data_process.png?raw=true)
+Click **"Start Processing"** when you're done.
+
+<details>
+<summary>📸 <strong>View Screenshot</strong></summary>
+<br/>
+<img src="assets/imgs/en_data_process.png" alt="Data Processing" width="100%"/>
+</details>
+
+---
 
 ### Step 2: Train the Model
 
-* Switch to the "Training" page, and adjust the parameters as needed (or leave them as default for a quick try).
-* The training and validation loss curves are displayed in real time. If you generated a validation set in Step 1, you should see two curves: blue for training loss, orange for validation loss.
-* If only one curve is shown, check the terminal output. If you see an error like:
+Switch to the **"Training"** page and adjust the parameters as needed (or leave them as default for a quick try).
 
-  ```
-  Error while evaluating val loss: Dataset too small: minimum dataset(val) size is 147, but block size is 512. Either reduce block size or add more data.
-  ```
+- **Loss Curves**: Blue = Training Loss, Orange = Validation Loss
+- If only one curve appears, check the terminal for block size errors — try reducing it to 128
 
-  it means your `block size` is too large for the validation set. Try reducing it, for example to 128.
-* You should now see both loss curves updating dynamically.
-* Click "Start Training" and wait for training to complete.
+<details>
+<summary>📸 <strong>View Screenshot</strong></summary>
+<br/>
+<img src="assets/imgs/en_train.png" alt="Training" width="100%"/>
+</details>
 
-![Training](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/imgs/en_train.png?raw=true)
+> [!NOTE]
+> **Evaluation Mode Only?**  
+> Set the `Number of Evaluation Seeds` to any value > 0 to activate evaluation-only mode. You'll see how the model performs with different random seeds.
 
-#### Evaluation Mode Only?
-
-* This mode lets you evaluate the model's loss on the validation set. Set the `Number of Evaluation Seeds` to any value >0 to activate evaluation-only mode. You'll see how the model performs with different random seeds.
+---
 
 ### Step 3: Generate Text
 
-1. Go to the "Inference" page
-2. Enter a prompt
-3. Click "Generate" and see what the model comes up with!
+Go to the **"Inference"** page, enter a prompt, and click **"Generate"** to see what the model comes up with!
 
-![Inference](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/imgs/en_inference.png?raw=true)
+<details>
+<summary>📸 <strong>View Screenshot</strong></summary>
+<br/>
+<img src="assets/imgs/en_inference.png" alt="Inference" width="100%"/>
+</details>
 
-### Step 4: Model Comparison
+---
 
-1. Go to the "Comparison" page
-2. Select two models to compare — they can even be the same model with different settings
-3. Their configurations will be displayed automatically
-4. You can input the same prompt and see how both models generate text
-5. Or, apply different inference settings (temperature, top\_k, etc.) to compare outputs
+### Step 4: SFT Training (Fine-Tuning) 🆕
 
-![Comparison](https://github.com/ystemsrx/mini-nanoGPT/blob/master/assets/imgs/en_comparison.png?raw=true)
+The **Supervised Fine-Tuning (SFT)** feature allows you to fine-tune pre-trained models for conversational AI tasks.
+
+#### How to Use SFT:
+
+1. Navigate to the **"SFT"** page
+2. Select a pre-trained base model from your model database
+3. Import your dataset in **Alpaca format** (JSON file or directory)
+4. Configure training parameters (learning rate, epochs, etc.)
+5. Click **"Start Training"** to begin fine-tuning
+
+<details>
+<summary>📸 <strong>View SFT Training Screenshot</strong></summary>
+<br/>
+<img src="assets/imgs/en_sft.png" alt="SFT Training" width="100%"/>
+</details>
+
+#### Alpaca Dataset Format:
+
+```json
+[
+  {
+    "instruction": "What is the capital of France?",
+    "input": "",
+    "output": "The capital of France is Paris."
+  },
+  {
+    "instruction": "Translate the following to Spanish:",
+    "input": "Hello, how are you?",
+    "output": "Hola, ¿cómo estás?"
+  }
+]
+```
+
+#### Chat with SFT Models:
+
+After SFT training, go to the **"Inference"** page to have interactive conversations with your fine-tuned model!
+
+<details>
+<summary>📸 <strong>View SFT Inference Screenshot</strong></summary>
+<br/>
+<img src="assets/imgs/en_inference_sft.png" alt="SFT Inference" width="100%"/>
+</details>
+
+---
+
+### Step 5: Model Comparison
+
+Navigate to the **"Comparison"** page to compare two models side by side:
+
+- Select two models (they can even be the same model with different settings)
+- Their configurations will be displayed automatically
+- Input the same prompt to see how both models generate text
+- Compare outputs with different inference settings (temperature, top_k, etc.)
+
+<details>
+<summary>📸 <strong>View Screenshot</strong></summary>
+<br/>
+<img src="assets/imgs/en_comparison.png" alt="Comparison" width="100%"/>
+</details>
+
+---
 
 ## 📁 Project Structure
 
 ```
-mini-nanogpt/
-├── app.py           # App entry point
-├── src/             # Configuration and core modules
-├── data/            # Data storage
-├── out/             # Model checkpoints
-└── assets/          # Tokenizer files and other resources
+mini-nanoGPT/
+├── 📄 app.py                 # Application entry point
+├── 📂 src/                   # Source code modules
+│   ├── 📂 ui/                # Gradio UI components
+│   │   ├── app.py            # Main UI layout
+│   │   ├── bindings/         # UI event bindings
+│   │   └── callbacks/        # UI callback functions
+│   ├── config.py             # Configuration management
+│   ├── data_process.py       # Data preprocessing
+│   ├── train.py              # Pre-training logic
+│   ├── sft.py                # SFT training module
+│   ├── infer.py              # Text generation
+│   ├── db_manager.py         # Model database management
+│   └── gpt_model.py          # GPT model architecture
+├── 📂 data/                  # Training data storage
+├── 📂 out/                   # Model checkpoints
+├── 📂 assets/                # Tokenizer files and resources
+└── 📂 docker/                # Docker configuration files
 ```
+
+---
 
 ## ❓ FAQ
 
-### It's running too slowly?
+<details>
+<summary><strong>🐢 Running too slowly?</strong></summary>
 
-* 💡 Try reducing batch size or model size
-* 💡 Use a GPU to greatly improve speed
-* 💡 Increase the evaluation interval
+- 💡 Reduce batch size or model size
+- 💡 Use a GPU to greatly improve speed
+- 💡 Increase the evaluation interval
 
-### The generated text isn’t good?
+</details>
 
-* 💡 Try increasing the training data
-* 💡 Tune the model hyperparameters
-* 💡 Adjust the temperature during generation
+<details>
+<summary><strong>📝 Generated text isn't good?</strong></summary>
 
-### Want to resume previous training?
+- 💡 Try increasing the training data
+- 💡 Tune the model hyperparameters
+- 💡 Adjust the temperature during generation
 
-* 💡 On the "Training" page, select "resume" under Initialization
-* 💡 Point to the previous output directory
+</details>
+
+<details>
+<summary><strong>🔄 Want to resume previous training?</strong></summary>
+
+- 💡 On the "Training" page, select "resume" under Initialization
+- 💡 Point to the previous output directory
+
+</details>
+
+<details>
+<summary><strong>💬 How to use SFT?</strong></summary>
+
+- 💡 First train a base model using pre-training
+- 💡 Prepare your dataset in Alpaca JSON format
+- 💡 Go to the SFT page and select your base model
+- 💡 Upload your dataset and start fine-tuning
+
+</details>
+
+---
 
 ## 🤝 Contributing
 
 Suggestions and improvements are welcome! You can:
 
-* Submit an Issue
-* Open a Pull Request
-* Share your experience using the tool
+- 🐛 Submit an [Issue](https://github.com/ystemsrx/mini-nanoGPT/issues)
+- 🔧 Open a [Pull Request](https://github.com/ystemsrx/mini-nanoGPT/pulls)
+- 💬 Share your experience using the tool
+
+---
 
 ## 📝 License
 
@@ -172,4 +329,12 @@ This project is open-sourced under the [MIT License](LICENSE).
 
 ---
 
-🎉 **Start your GPT journey now!**
+<div align="center">
+
+### 🎉 Start your GPT journey now!
+
+<a href="https://github.com/ystemsrx/mini-nanoGPT">
+  <img src="https://img.shields.io/badge/⭐_Star_this_repo-if_you_find_it_useful!-yellow?style=for-the-badge" alt="Star"/>
+</a>
+
+</div>
