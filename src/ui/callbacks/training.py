@@ -2,9 +2,16 @@ import torch
 import gradio as gr
 
 from src.config import DEFAULT_CONFIG
-from src.train import train_model_generator
+from src.train import train_model_generator, stop_training
 from src.infer_cache import ModelCache
 from src.ui.charts import generate_loss_chart_html
+
+
+def stop_training_cb():
+    """Stop training and return button states"""
+    stop_training()
+    # Return: log message, train_btn (enabled), stop_btn (disabled)
+    return "🛑 Stopping training...", gr.update(interactive=True), gr.update(interactive=False)
 
 
 def update_lr_scheduler_params(scheduler_type):
@@ -168,7 +175,7 @@ def training_cb(
 
     except ValueError as e:
         error_msg = f"Parameter validation error: {str(e)}"
-        yield (f"<div style='color:red;'>{error_msg}</div>", "", empty_plot_html)
+        yield (f"<div style='color:red;'>{error_msg}</div>", "", empty_plot_html, gr.update(interactive=True), gr.update(interactive=False))
         return
 
     try:
@@ -263,7 +270,10 @@ def training_cb(
                 val_data_tuples = list(zip(val_steps, val_losses)) if val_steps and val_losses else []
                 current_plot_rendered_html = generate_loss_chart_html(train_data_tuples, val_data_tuples)
 
-            yield (p_html_progress, log_line_html, current_plot_rendered_html)
+            yield (p_html_progress, log_line_html, current_plot_rendered_html, gr.update(interactive=False), gr.update(interactive=True))
+
+        # Training completed, restore button states
+        yield (p_html_progress, log_line_html, current_plot_rendered_html, gr.update(interactive=True), gr.update(interactive=False))
 
     except Exception as e:
         import traceback
@@ -294,4 +304,4 @@ def training_cb(
         except Exception as cleanup_err:
             print(f"Warning: Post-error cleanup failed: {cleanup_err}")
 
-        yield (f"<div style='color:red;'>{err_msg}</div>", "", empty_plot_html)
+        yield (f"<div style='color:red;'>{err_msg}</div>", "", empty_plot_html, gr.update(interactive=True), gr.update(interactive=False))

@@ -103,6 +103,7 @@ def _reset_updates():
         gr.update(),
         "",
         "",
+        gr.update(value=False, interactive=False),  # inf_chat_mode: disabled when no model selected
         gr.update(value=[]),
         gr.update(value=DEFAULT_CONFIG["sft"]["system_prompt"]),
         "",
@@ -344,6 +345,8 @@ def select_model_cb(sel: str):
         gr.update(),
         inference_history_html,
         inference_advanced_html,
+        # Check if SFT checkpoint exists to enable/disable chat mode
+        gr.update(value=False, interactive=os.path.exists(os.path.join(out_dir_root, "sft", "ckpt_sft.pt"))),
         gr.update(value=chat_history),
         gr.update(value=chat_system_prompt_saved if chat_system_prompt_saved is not None else ""),
         chat_advanced_html_saved,

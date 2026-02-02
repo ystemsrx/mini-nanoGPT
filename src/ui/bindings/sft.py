@@ -91,11 +91,11 @@ def bind_sft(
             sft_save_best_loss_ckpt,
             lang_select,
         ],
-        outputs=[sft_progress, sft_log, sft_plot],
+        outputs=[sft_progress, sft_log, sft_plot, sft_start_btn, sft_stop_btn],
     )
 
     sft_stop_btn.click(
         fn=sft_stop_cb,
         inputs=[],
-        outputs=[sft_log],
+        outputs=[sft_log, sft_start_btn, sft_stop_btn],
     )

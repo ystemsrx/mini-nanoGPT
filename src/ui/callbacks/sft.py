@@ -128,13 +128,13 @@ def sft_train_cb(
     empty_plot = generate_loss_chart_html([], [])
 
     if not model_selection or " - " not in model_selection:
-        yield f"<div style='color:red;'>❌ Please select a base model</div>", "", empty_plot
+        yield f"<div style='color:red;'>\u274c Please select a base model</div>", "", empty_plot, gr.update(interactive=True), gr.update(interactive=False)
         return
 
     model_id = int(model_selection.split(" - ")[0])
     model_info = dbm.get_model(model_id)
     if not model_info:
-        yield f"<div style='color:red;'>❌ Model not found</div>", "", empty_plot
+        yield f"<div style='color:red;'>\u274c Model not found</div>", "", empty_plot, gr.update(interactive=True), gr.update(interactive=False)
         return
 
     base_ckpt_path = os.path.join(model_info["out_dir"], "ckpt.pt")
@@ -198,7 +198,7 @@ def sft_train_cb(
         if init_from not in ["scratch", "resume"]:
             raise ValueError("init_from must be 'scratch' or 'resume'")
     except ValueError as e:
-        yield f"<div style='color:red;'>❌ {str(e)}</div>", "", empty_plot
+        yield f"<div style='color:red;'>\u274c {str(e)}</div>", "", empty_plot, gr.update(interactive=True), gr.update(interactive=False)
         return
 
     sft_cfg = {
@@ -225,7 +225,7 @@ def sft_train_cb(
     dbm.save_sft_config(model_id, sft_cfg)
 
     if not dataset:
-        yield f"<div style='color:red;'>{T_current['sft_no_dataset']}</div>", "", empty_plot
+        yield f"<div style='color:red;'>{T_current['sft_no_dataset']}</div>", "", empty_plot, gr.update(interactive=True), gr.update(interactive=False)
         return
 
     # Create SFT output directory
@@ -273,7 +273,10 @@ def sft_train_cb(
                 plot_html = empty_plot
 
             log_html = _append_log_line(log_msg)
-            yield progress_html, log_html, plot_html
+            yield progress_html, log_html, plot_html, gr.update(interactive=False), gr.update(interactive=True)
+
+        # Training completed, restore button states
+        yield progress_html, log_html, plot_html, gr.update(interactive=True), gr.update(interactive=False)
     except Exception as e:
         import traceback
 
@@ -298,9 +301,10 @@ def sft_train_cb(
             print(f"Warning: Post-SFT-error cleanup failed: {cleanup_err}")
 
         err_log_html = _append_log_line(f"<div style='color:red;'>{err_msg}</div>")
-        yield f"<div style='color:red;'>{err_msg}</div>", err_log_html, empty_plot
+        yield f"<div style='color:red;'>{err_msg}</div>", err_log_html, empty_plot, gr.update(interactive=True), gr.update(interactive=False)
 
 
 def sft_stop_cb():
     stop_sft_training()
-    return "🛑 Stopping SFT..."
+    # Return: log message, sft_start_btn (enabled), sft_stop_btn (disabled)
+    return "🛑 Stopping SFT...", gr.update(interactive=True), gr.update(interactive=False)

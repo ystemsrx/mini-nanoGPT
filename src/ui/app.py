@@ -366,7 +366,7 @@ def build_app_interface(selected_lang: str = "zh"):
 
                 with gr.Row():
                     train_btn = gr.Button(T["train_start_btn"])
-                    stop_btn = gr.Button(T["stop_btn"])
+                    stop_btn = gr.Button(T["stop_btn"], variant="stop", interactive=False)
 
                 with gr.Row():
                     with gr.Column(scale=1):
@@ -545,7 +545,7 @@ def build_app_interface(selected_lang: str = "zh"):
 
                 with gr.Row():
                     sft_start_btn = gr.Button(T["sft_start_btn"], variant="primary", interactive=False)
-                    sft_stop_btn = gr.Button(T["sft_stop_btn"], variant="stop")
+                    sft_stop_btn = gr.Button(T["sft_stop_btn"], variant="stop", interactive=False)
 
                 with gr.Row():
                     with gr.Column(scale=1):
@@ -952,6 +952,7 @@ def build_app_interface(selected_lang: str = "zh"):
             inf_btn,
             inf_output,
             inf_advanced_output,
+            inf_chat_mode,
             chatbot,
             inf_system_prompt,
             chat_advanced_output,

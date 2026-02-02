@@ -1,7 +1,7 @@
 from src.config import DEFAULT_CONFIG
-from src.train import stop_training
 from src.ui.callbacks.training import (
     training_cb,
+    stop_training_cb,
     update_lr_scheduler_params,
     update_self_attention_params,
 )
@@ -67,7 +67,7 @@ def bind_training(
     train_log,
     train_plot,
 ):
-    stop_btn.click(fn=stop_training, inputs=[], outputs=[])
+    stop_btn.click(fn=stop_training_cb, inputs=[], outputs=[train_log, train_btn, stop_btn])
 
     # -----------------------------
     # LR Scheduler Callback
@@ -175,7 +175,7 @@ def bind_training(
             strict_validation_box,
             fallback_on_error_box,
         ],
-        outputs=[train_progress, train_log, train_plot],
+        outputs=[train_progress, train_log, train_plot, train_btn, stop_btn],
     )
 
     # Initialize LR scheduler params display logic on app load
