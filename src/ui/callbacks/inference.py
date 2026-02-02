@@ -2,9 +2,10 @@ import os
 from pathlib import Path
 
 import torch
+import gradio as gr
 
 from src.config import DEFAULT_CONFIG
-from src.infer_cache import cached_generate_text, ModelCache, UnknownTokenError
+from src.infer_cache import cached_generate_text, ModelCache, UnknownTokenError, stop_inference
 from src.sft import tokenize_user_input
 from src.ui.html_render import _escape_html, _generate_token_html, _generate_advanced_html
 from src.ui.state import dbm
@@ -14,11 +15,35 @@ def inference_cb(
     data_dir_inf_, out_dir_inf_,
     prompt_, num_samples_, max_new_tokens_,
     temperature_, top_k_, dtype_inf_, device_inf_, seed_inf_,
+    model_sel=None,
 ):
     cache = None
     prompt_tokens = None
     try:
         print("🚀 Single model inference started")
+        yield gr.update(), gr.update(), gr.update(interactive=False), gr.update(interactive=True)
+
+        if model_sel and (not data_dir_inf_ or not out_dir_inf_):
+            try:
+                model_id = int(model_sel.split(" - ")[0])
+                model_info = dbm.get_model(model_id)
+                if model_info:
+                    data_dir_inf_ = model_info.get("processed_data_dir", data_dir_inf_)
+                    out_dir_inf_ = model_info.get("out_dir", out_dir_inf_)
+            except Exception:
+                pass
+
+        if model_sel and out_dir_inf_:
+            try:
+                ckpt_path = out_dir_inf_ if out_dir_inf_.endswith(".pt") else os.path.join(out_dir_inf_, "ckpt.pt")
+                if not os.path.exists(ckpt_path):
+                    model_id = int(model_sel.split(" - ")[0])
+                    model_info = dbm.get_model(model_id)
+                    if model_info:
+                        data_dir_inf_ = model_info.get("processed_data_dir", data_dir_inf_)
+                        out_dir_inf_ = model_info.get("out_dir", out_dir_inf_)
+            except Exception:
+                pass
 
         # Ensure numeric conversions are robust
         num_samples_int = int(float(num_samples_))
@@ -115,6 +140,12 @@ def inference_cb(
         for item in gen:
             text_piece, token_detail = item
 
+            # Check if this is an error message - display directly without token highlighting
+            if text_piece.startswith("Error:"):
+                error_html = f"<div style='color: red; padding: 10px; background: #ffe6e6; border-radius: 8px;'>{_escape_html(text_piece)}</div>"
+                yield error_html, "", gr.update(interactive=True), gr.update(interactive=False)
+                return
+
             # Check for sample header
             if text_piece.startswith("Sample ") and text_piece.endswith(":\n"):
                 # Save previous sample if exists
@@ -194,7 +225,7 @@ def inference_cb(
 
             advanced_html = _generate_advanced_html(list(consolidated_details.values()))
 
-            yield main_html, advanced_html
+            yield main_html, advanced_html, gr.update(interactive=False), gr.update(interactive=True)
 
         # Final update - add the last sample
         if current_sample_tokens:
@@ -247,7 +278,7 @@ def inference_cb(
         except Exception as save_err:
             print(f"Warning: Failed to save inference history to database: {save_err}")
 
-        yield main_html, advanced_html
+        yield main_html, advanced_html, gr.update(interactive=True), gr.update(interactive=False)
 
         print("✅ Single model inference completed successfully")
 
@@ -257,7 +288,7 @@ def inference_cb(
         )
         print(f"❌ Unknown token error: {e}")
         error_html = f"<div style='color: red; padding: 10px; background: #ffe6e6; border-radius: 8px;'>{error_msg}</div>"
-        yield error_html, ""
+        yield error_html, "", gr.update(interactive=True), gr.update(interactive=False)
 
     except Exception as e:
         import traceback
@@ -266,7 +297,7 @@ def inference_cb(
         print(f"❌ Single inference error: {error_msg}")
         print(traceback.format_exc())
         error_html = f"<div style='color: red; padding: 10px; background: #ffe6e6; border-radius: 8px;'>{_escape_html(error_msg)}</div>"
-        yield error_html, ""
+        yield error_html, "", gr.update(interactive=True), gr.update(interactive=False)
 
     finally:
         # Unified cache cleanup
@@ -277,3 +308,8 @@ def inference_cb(
             print("🧹 Single inference completed, cache cleared for optimal performance")
         except Exception as cleanup_error:
             print(f"Warning: Cache cleanup failed: {cleanup_error}")
+
+
+def stop_inference_cb():
+    stop_inference()
+    return gr.update(), gr.update(), gr.update(interactive=True), gr.update(interactive=False)

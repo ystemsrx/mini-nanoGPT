@@ -393,10 +393,9 @@ def generate_text(
                         separator = "\n" + "-" * 30 + "\n"
                         yield separator
 
+        # Save plain text inference history for standalone CLI usage
+        # Note: When used via UI, the UI layer saves HTML-formatted history separately
         final_text = "\n\n".join(accumulated_output)
-
-        # Write inference history to DB
-        # DB Integration
         dbm.save_inference_history(model_id, final_text)
 
     except Exception as ex:

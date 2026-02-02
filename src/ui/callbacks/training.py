@@ -175,7 +175,8 @@ def training_cb(
 
     except ValueError as e:
         error_msg = f"Parameter validation error: {str(e)}"
-        yield (f"<div style='color:red;'>{error_msg}</div>", "", empty_plot_html, gr.update(interactive=True), gr.update(interactive=False))
+        error_html = f"<span style='color:red;'>{error_msg}</span>"
+        yield (f"<div style='color:red;'>{error_msg}</div>", error_html, empty_plot_html, gr.update(interactive=True), gr.update(interactive=False))
         return
 
     try:
@@ -233,9 +234,9 @@ def training_cb(
             step_size=safe_int(step_size_, defaults_train["step_size"]),
             step_gamma=safe_float(step_gamma_, defaults_train["step_gamma"]),
             polynomial_power=safe_float(polynomial_power_, defaults_train["polynomial_power"]),
-            backend=backend_,
-            device=device_,
-            dtype=dtype_,
+            backend=safe_str(backend_, defaults_train["backend"]),
+            device=safe_str(device_, defaults_train["device"]),
+            dtype=safe_str(dtype_, defaults_train["dtype"]),
             compile_model=bool(compile_),
             seed=safe_int(seed_, defaults_train["seed"]),
             save_interval=safe_int(save_interval_, defaults_train["save_interval"]),
@@ -269,6 +270,10 @@ def training_cb(
                 train_data_tuples = list(zip(tr_steps, tr_losses)) if tr_steps and tr_losses else []
                 val_data_tuples = list(zip(val_steps, val_losses)) if val_steps and val_losses else []
                 current_plot_rendered_html = generate_loss_chart_html(train_data_tuples, val_data_tuples)
+
+            # Wrap error messages in red color
+            if log_line_html and (log_line_html.startswith("Error:") or log_line_html.startswith("❌")):
+                log_line_html = f"<span style='color:red;'>{log_line_html}</span>"
 
             yield (p_html_progress, log_line_html, current_plot_rendered_html, gr.update(interactive=False), gr.update(interactive=True))
 
@@ -304,4 +309,5 @@ def training_cb(
         except Exception as cleanup_err:
             print(f"Warning: Post-error cleanup failed: {cleanup_err}")
 
-        yield (f"<div style='color:red;'>{err_msg}</div>", "", empty_plot_html, gr.update(interactive=True), gr.update(interactive=False))
+        error_html = f"<span style='color:red;'>{err_msg}</span>"
+        yield (f"<div style='color:red;'>{err_msg}</div>", error_html, empty_plot_html, gr.update(interactive=True), gr.update(interactive=False))

@@ -32,6 +32,7 @@ EOT_ID = 151643
 
 # Global stop signal for SFT training
 sft_stop_signal = False
+chat_stop_signal = False
 
 
 def sanitize_special_tokens(text: str) -> str:
@@ -66,6 +67,12 @@ def stop_sft_training():
     """Sets a global stop signal to stop SFT training."""
     global sft_stop_signal
     sft_stop_signal = True
+
+
+def stop_chat_generation():
+    """Sets a global stop signal to stop chat generation."""
+    global chat_stop_signal
+    chat_stop_signal = True
 
 
 def validate_alpaca_format(data: List[Dict]) -> Tuple[bool, str]:
@@ -626,7 +633,7 @@ def sft_train_generator(
                 print(f"Warning: Could not load optimizer state: {e_optim}. Continuing with fresh optimizer.")
         
         # D1) GradScaler should only be enabled for CUDA + float16
-        scaler = torch.cuda.amp.GradScaler(enabled=(device_type == 'cuda' and dtype == 'float16'))
+        scaler = torch.amp.GradScaler('cuda', enabled=(device_type == 'cuda' and dtype == 'float16'))
         
         # D3) Pre-filter dataset and cache tokenized results to avoid double tokenization
         # This ensures progress bar and LR schedule are accurate, and improves training efficiency
@@ -1143,6 +1150,8 @@ def chat_generate(
     After generation completes, if return_detailed_info is True, the final yield includes
     'generated_token_ids' in token_detail for saving to database.
     """
+    global chat_stop_signal
+    chat_stop_signal = False
     # Get device from model parameters to avoid device mismatch
     # This ensures tensors are created on the same device as the model
     device = next(model.parameters()).device
@@ -1304,6 +1313,8 @@ def chat_generate(
     
     with torch.no_grad():
         for _ in range(max_new_tokens):
+            if chat_stop_signal:
+                break
             idx_cond = idx[:, -block_size:]
             logits, _ = model(idx_cond)
             logits = logits[:, -1, :] / temperature

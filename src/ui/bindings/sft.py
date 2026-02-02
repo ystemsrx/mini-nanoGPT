@@ -33,6 +33,7 @@ def bind_sft(
     sft_log,
     sft_plot,
     sft_stop_btn,
+    inf_chat_mode,
 ):
     sft_lr_scheduler.change(
         fn=update_sft_lr_scheduler_params,
@@ -91,7 +92,7 @@ def bind_sft(
             sft_save_best_loss_ckpt,
             lang_select,
         ],
-        outputs=[sft_progress, sft_log, sft_plot, sft_start_btn, sft_stop_btn],
+        outputs=[sft_progress, sft_log, sft_plot, sft_start_btn, sft_stop_btn, inf_chat_mode],
     )
 
     sft_stop_btn.click(

@@ -36,6 +36,14 @@ CUSTOM_CSS = """
     #inf-result-html > div{
         background:white !important;
     }
+    #comp-left-result-html,
+    #comp-right-result-html{
+        background:white !important;
+    }
+    #comp-left-result-html > div,
+    #comp-right-result-html > div{
+        background:white !important;
+    }
     """
 
 TOKEN_COLORS = [

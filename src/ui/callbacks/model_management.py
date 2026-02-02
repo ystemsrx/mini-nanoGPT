@@ -101,8 +101,9 @@ def _reset_updates():
         _d(d_inf["device"]),
         _d(d_inf["seed"]),
         gr.update(),
-        "",
-        "",
+        gr.update(),
+        gr.update(value=""),  # inf_output: HTML component, no interactive
+        gr.update(value=""),  # inf_advanced_output: HTML component, no interactive
         gr.update(value=False, interactive=False),  # inf_chat_mode: disabled when no model selected
         gr.update(value=[]),
         gr.update(value=DEFAULT_CONFIG["sft"]["system_prompt"]),
@@ -132,6 +133,7 @@ def _reset_updates():
         _d(d_inf["seed"]),
         _d(d_inf["prompt"]),
         gr.update(),
+        gr.update(interactive=False),
         gr.update(value=""),
         gr.update(value=""),
         _d(),
@@ -343,6 +345,7 @@ def select_model_cb(sel: str):
         gr.update(value=_ic("device", d_inf_defaults["device"])),
         gr.update(value=_ic("seed", d_inf_defaults["seed"])),
         gr.update(),
+        gr.update(interactive=False),
         inference_history_html,
         inference_advanced_html,
         # Check if SFT checkpoint exists to enable/disable chat mode
@@ -375,12 +378,13 @@ def select_model_cb(sel: str):
         gr.update(value=_ic("seed", d_inf_defaults["seed"])),
         gr.update(value=_ic("prompt", d_inf_defaults["prompt"])),
         gr.update(),
+        gr.update(interactive=False),
         gr.update(),
         gr.update(),
-        gr.update(value=""),
-        gr.update(value=""),
-        gr.update(value=""),
-        gr.update(value=""),
+        gr.update(),
+        gr.update(),
+        gr.update(),
+        gr.update(),
     ]
     def _sft(k, default_val_from_const):
         return sft_cfg.get(k, default_val_from_const)

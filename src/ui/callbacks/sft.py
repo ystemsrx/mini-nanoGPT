@@ -101,6 +101,9 @@ def sft_train_cb(
         if msg is None:
             return ""
         msg_s = str(msg)
+        # Wrap error messages in red color
+        if msg_s.startswith("Error:") or msg_s.startswith("❌"):
+            msg_s = f"<span style='color:red;'>{msg_s}</span>"
         log_lines.append(msg_s)
         log_html = "<br>".join(log_lines)
         log_html += (
@@ -128,13 +131,15 @@ def sft_train_cb(
     empty_plot = generate_loss_chart_html([], [])
 
     if not model_selection or " - " not in model_selection:
-        yield f"<div style='color:red;'>\u274c Please select a base model</div>", "", empty_plot, gr.update(interactive=True), gr.update(interactive=False)
+        err_msg = "\u274c Please select a base model"
+        yield f"<div style='color:red;'>{err_msg}</div>", f"<span style='color:red;'>{err_msg}</span>", empty_plot, gr.update(interactive=True), gr.update(interactive=False), gr.update()
         return
 
     model_id = int(model_selection.split(" - ")[0])
     model_info = dbm.get_model(model_id)
     if not model_info:
-        yield f"<div style='color:red;'>\u274c Model not found</div>", "", empty_plot, gr.update(interactive=True), gr.update(interactive=False)
+        err_msg = "\u274c Model not found"
+        yield f"<div style='color:red;'>{err_msg}</div>", f"<span style='color:red;'>{err_msg}</span>", empty_plot, gr.update(interactive=True), gr.update(interactive=False), gr.update()
         return
 
     base_ckpt_path = os.path.join(model_info["out_dir"], "ckpt.pt")
@@ -198,7 +203,8 @@ def sft_train_cb(
         if init_from not in ["scratch", "resume"]:
             raise ValueError("init_from must be 'scratch' or 'resume'")
     except ValueError as e:
-        yield f"<div style='color:red;'>\u274c {str(e)}</div>", "", empty_plot, gr.update(interactive=True), gr.update(interactive=False)
+        err_msg = f"\u274c {str(e)}"
+        yield f"<div style='color:red;'>{err_msg}</div>", f"<span style='color:red;'>{err_msg}</span>", empty_plot, gr.update(interactive=True), gr.update(interactive=False), gr.update()
         return
 
     sft_cfg = {
@@ -225,7 +231,8 @@ def sft_train_cb(
     dbm.save_sft_config(model_id, sft_cfg)
 
     if not dataset:
-        yield f"<div style='color:red;'>{T_current['sft_no_dataset']}</div>", "", empty_plot, gr.update(interactive=True), gr.update(interactive=False)
+        err_msg = T_current['sft_no_dataset']
+        yield f"<div style='color:red;'>{err_msg}</div>", f"<span style='color:red;'>{err_msg}</span>", empty_plot, gr.update(interactive=True), gr.update(interactive=False), gr.update()
         return
 
     # Create SFT output directory
@@ -233,7 +240,7 @@ def sft_train_cb(
     os.makedirs(sft_out_dir, exist_ok=True)
 
     start_log_html = _append_log_line("🚀 Starting SFT Training...")
-    yield make_progress_html(0, 100), start_log_html, empty_plot
+    yield make_progress_html(0, 100), start_log_html, empty_plot, gr.update(interactive=False), gr.update(interactive=True), gr.update()
 
     try:
         generator = sft_train_generator(
@@ -263,7 +270,14 @@ def sft_train_cb(
             system_prompt=system_prompt,
         )
 
+        # Track if training encountered an error
+        training_had_error = False
+
         for progress_html, log_msg, plot_data in generator:
+            # Check if this is an error message from the generator
+            if log_msg and (str(log_msg).startswith("Error:") or str(log_msg).startswith("❌")):
+                training_had_error = True
+
             # Plot data format: (steps, losses, val_steps, val_losses)
             if plot_data and len(plot_data) >= 2:
                 train_data = list(zip(plot_data[0], plot_data[1]))
@@ -273,10 +287,14 @@ def sft_train_cb(
                 plot_html = empty_plot
 
             log_html = _append_log_line(log_msg)
-            yield progress_html, log_html, plot_html, gr.update(interactive=False), gr.update(interactive=True)
+            yield progress_html, log_html, plot_html, gr.update(interactive=False), gr.update(interactive=True), gr.update()
 
         # Training completed, restore button states
-        yield progress_html, log_html, plot_html, gr.update(interactive=True), gr.update(interactive=False)
+        # Only enable chat mode if training was successful (no errors)
+        if training_had_error:
+            yield progress_html, log_html, plot_html, gr.update(interactive=True), gr.update(interactive=False), gr.update()
+        else:
+            yield progress_html, log_html, plot_html, gr.update(interactive=True), gr.update(interactive=False), gr.update(interactive=True)
     except Exception as e:
         import traceback
 
@@ -301,7 +319,7 @@ def sft_train_cb(
             print(f"Warning: Post-SFT-error cleanup failed: {cleanup_err}")
 
         err_log_html = _append_log_line(f"<div style='color:red;'>{err_msg}</div>")
-        yield f"<div style='color:red;'>{err_msg}</div>", err_log_html, empty_plot, gr.update(interactive=True), gr.update(interactive=False)
+        yield f"<div style='color:red;'>{err_msg}</div>", err_log_html, empty_plot, gr.update(interactive=True), gr.update(interactive=False), gr.update()
 
 
 def sft_stop_cb():

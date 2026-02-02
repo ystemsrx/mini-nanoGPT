@@ -44,7 +44,7 @@ def build_app_interface(selected_lang: str = "zh"):
             model_dropdown = gr.Dropdown(label=T["registered_models"], choices=_get_model_choices_list(), value=None, interactive=True, scale=2)
             with gr.Column(scale=1):
                 refresh_models_btn = gr.Button(T["refresh_tables"])
-                delete_model_btn = gr.Button(T["delete_selected_model"], variant="stop")
+                delete_model_btn = gr.Button(T["delete_selected_model"], variant="stop", interactive=False)
 
         # ========= Tabs ========= #
         with gr.Tabs() as main_tabs:
@@ -632,7 +632,9 @@ def build_app_interface(selected_lang: str = "zh"):
 
                 # Standard Inference Interface (Hidden when Chat Mode is enabled)
                 with gr.Group(visible=True) as standard_interface_group:
-                    inf_btn = gr.Button(T["inf_start_btn"])
+                    with gr.Row():
+                        inf_btn = gr.Button(T["inf_start_btn"])
+                        inf_stop_btn = gr.Button(T["inf_stop_btn"], variant="stop", interactive=False)
                     inf_output = gr.HTML(label=T["inf_result"], elem_id="inf-result-html")
 
                     # Advanced output section (collapsed by default)
@@ -681,6 +683,8 @@ def build_app_interface(selected_lang: str = "zh"):
 
                 # Inference playground
                 gr.Markdown(f"### {T['compare_inference_playground']}")
+
+                comp_chat_mode = gr.Checkbox(label=T["compare_chat_mode"], value=False, interactive=False)
 
                 # Parameters for left and right models
                 with gr.Row():
@@ -748,29 +752,62 @@ def build_app_interface(selected_lang: str = "zh"):
                                 value=DEFAULT_CONFIG["inference"]["seed"],
                             )
 
-                # Shared prompt
-                comp_prompt = gr.Textbox(
-                    label=T["compare_shared_prompt"],
-                    lines=5,
-                    value=DEFAULT_CONFIG["inference"]["prompt"],
-                    placeholder="Just write something...",
-                )
+                # Standard comparison interface (hidden when chat mode is enabled)
+                with gr.Group(visible=True) as comp_standard_group:
+                    comp_prompt = gr.Textbox(
+                        label=T["compare_shared_prompt"],
+                        lines=5,
+                        value=DEFAULT_CONFIG["inference"]["prompt"],
+                        placeholder="Just write something...",
+                    )
 
-                # Generate button
-                comp_generate_btn = gr.Button(T["compare_generate_btn"])
+                    with gr.Row():
+                        comp_generate_btn = gr.Button(T["compare_generate_btn"])
+                        comp_stop_btn = gr.Button(T["inf_stop_btn"], variant="stop", interactive=False)
 
-                # Output display
-                with gr.Row():
-                    with gr.Column():
-                        comp_left_output = gr.Textbox(label=T["compare_left_output"], lines=10)
-                    with gr.Column():
-                        comp_right_output = gr.Textbox(label=T["compare_right_output"], lines=10)
+                    # Output display
+                    with gr.Row():
+                        with gr.Column():
+                            comp_left_output = gr.HTML(label=T["compare_left_output"], elem_id="comp-left-result-html")
+                        with gr.Column():
+                            comp_right_output = gr.HTML(label=T["compare_right_output"], elem_id="comp-right-result-html")
+
+                # Chat comparison interface (hidden by default)
+                with gr.Group(visible=False) as comp_chat_group:
+                    with gr.Row():
+                        comp_left_chatbot = gr.Chatbot(
+                            label=T["compare_left_output"],
+                            height=350,
+                            sanitize_html=False,
+                            type="messages",
+                        )
+                        comp_right_chatbot = gr.Chatbot(
+                            label=T["compare_right_output"],
+                            height=350,
+                            sanitize_html=False,
+                            type="messages",
+                        )
+                    comp_system_prompt = gr.Textbox(
+                        label=T["inf_system_prompt"],
+                        value=DEFAULT_CONFIG["sft"]["system_prompt"],
+                    )
+                    with gr.Row():
+                        comp_user_input = gr.Textbox(
+                            label=T["inf_user_input"],
+                            placeholder="Type a message...",
+                            scale=4,
+                        )
+                        with gr.Column(scale=1, min_width=100):
+                            comp_send_btn = gr.Button(T["inf_send_btn"], variant="primary")
+                            comp_clear_btn = gr.Button(T["inf_clear_chat"])
 
                 # Hidden fields to store model data paths
                 comp_left_data_dir = gr.Textbox(visible=False)
                 comp_left_out_dir = gr.Textbox(visible=False)
                 comp_right_data_dir = gr.Textbox(visible=False)
                 comp_right_out_dir = gr.Textbox(visible=False)
+                comp_left_has_sft = gr.Checkbox(visible=False, value=False)
+                comp_right_has_sft = gr.Checkbox(visible=False, value=False)
 
         # ------------------------------------------------------------------
         # Call backs: data processing / training / inference
@@ -858,6 +895,7 @@ def build_app_interface(selected_lang: str = "zh"):
             standard_interface_group,
             prompt_box,
             inf_btn,
+            inf_stop_btn,
             data_dir_inf,
             out_dir_inf,
             num_samples_box,
@@ -950,6 +988,7 @@ def build_app_interface(selected_lang: str = "zh"):
             device_box_inf,
             seed_box_inf,
             inf_btn,
+            inf_stop_btn,
             inf_output,
             inf_advanced_output,
             inf_chat_mode,
@@ -979,6 +1018,7 @@ def build_app_interface(selected_lang: str = "zh"):
             comp_right_seed,
             comp_prompt,
             comp_generate_btn,
+            comp_stop_btn,
             comp_left_output,
             comp_right_output,
             # Hidden comparison fields
@@ -1081,6 +1121,7 @@ def build_app_interface(selected_lang: str = "zh"):
             device_box_inf,
             seed_box_inf,
             inf_btn,
+            inf_stop_btn,
             inf_output,
             inf_advanced_output,
             advanced_accordion,
@@ -1116,8 +1157,16 @@ def build_app_interface(selected_lang: str = "zh"):
             comp_right_seed,
             comp_prompt,
             comp_generate_btn,
+            comp_stop_btn,
             comp_left_output,
             comp_right_output,
+            comp_chat_mode,
+            comp_system_prompt,
+            comp_user_input,
+            comp_send_btn,
+            comp_clear_btn,
+            comp_left_chatbot,
+            comp_right_chatbot,
             # Self-attention parameters
             self_attn_accordion,
             use_self_attention_box,
@@ -1177,6 +1226,7 @@ def build_app_interface(selected_lang: str = "zh"):
             sft_plot,
         ]
         bind_model_management(
+            demo,
             model_dropdown,
             delete_model_btn,
             refresh_models_btn,
@@ -1200,11 +1250,16 @@ def build_app_interface(selected_lang: str = "zh"):
             comp_left_history,
             comp_left_data_dir,
             comp_left_out_dir,
+            comp_left_has_sft,
             comp_right_params,
             comp_right_plot,
             comp_right_history,
             comp_right_data_dir,
             comp_right_out_dir,
+            comp_right_has_sft,
+            comp_chat_mode,
+            comp_standard_group,
+            comp_chat_group,
             comp_generate_btn,
             comp_prompt,
             comp_left_num_samples,
@@ -1221,6 +1276,13 @@ def build_app_interface(selected_lang: str = "zh"):
             comp_right_seed,
             comp_left_output,
             comp_right_output,
+            comp_stop_btn,
+            comp_system_prompt,
+            comp_user_input,
+            comp_send_btn,
+            comp_clear_btn,
+            comp_left_chatbot,
+            comp_right_chatbot,
         )
 
         # ------------------------------------------------------------------
@@ -1258,6 +1320,7 @@ def build_app_interface(selected_lang: str = "zh"):
             sft_log,
             sft_plot,
             sft_stop_btn,
+            inf_chat_mode,
         )
 
     return demo

@@ -1,7 +1,7 @@
 import gradio as gr
 
 from src.ui.callbacks.chat import chat_cb, clear_chat
-from src.ui.callbacks.inference import inference_cb
+from src.ui.callbacks.inference import inference_cb, stop_inference_cb
 
 
 def bind_inference(
@@ -10,6 +10,7 @@ def bind_inference(
     standard_interface_group,
     prompt_box,
     inf_btn,
+    inf_stop_btn,
     data_dir_inf,
     out_dir_inf,
     num_samples_box,
@@ -35,12 +36,13 @@ def bind_inference(
             chat_interface_group: gr.update(visible=is_chat),
             standard_interface_group: gr.update(visible=not is_chat),
             prompt_box: gr.update(visible=not is_chat),
+            num_samples_box: gr.update(visible=not is_chat),
         }
 
     inf_chat_mode.change(
         fn=toggle_chat_mode,
         inputs=[inf_chat_mode],
-        outputs=[chat_interface_group, standard_interface_group, prompt_box],
+        outputs=[chat_interface_group, standard_interface_group, prompt_box, num_samples_box],
     )
 
     # Single model inference
@@ -57,8 +59,15 @@ def bind_inference(
             dtype_box_inf,
             device_box_inf,
             seed_box_inf,
+            model_dropdown,
         ],
-        outputs=[inf_output, inf_advanced_output],
+        outputs=[inf_output, inf_advanced_output, inf_btn, inf_stop_btn],
+    )
+
+    inf_stop_btn.click(
+        fn=stop_inference_cb,
+        inputs=[],
+        outputs=[inf_output, inf_advanced_output, inf_btn, inf_stop_btn],
     )
 
     # Chat callbacks

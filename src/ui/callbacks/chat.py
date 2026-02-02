@@ -6,7 +6,7 @@ import torch
 
 from src.gpt_model import GPTConfig, GPT
 from src.gpt_self_attn import GPTSelfAttnConfig, GPTSelfAttn
-from src.sft import chat_generate, tokenize_user_input
+from src.sft import chat_generate, tokenize_user_input, stop_chat_generation
 from src.ui.html_render import (
     _escape_html,
     _generate_user_tokenization_html,
@@ -280,6 +280,7 @@ def chat_cb(user_msg, history, model_sel, sys_prompt, max_tokens, temp, top_k, s
 
 
 def clear_chat(model_sel):
+    stop_chat_generation()
     # Clear chat history from database if a model is selected
     if model_sel and " - " in model_sel:
         try:

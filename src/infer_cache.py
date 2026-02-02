@@ -28,6 +28,13 @@ class UnknownTokenError(Exception):
         super().__init__(message)
 
 
+inference_stop_signal = False
+
+
+def stop_inference():
+    global inference_stop_signal
+    inference_stop_signal = True
+
 
 class ModelCache:
     """
@@ -493,6 +500,9 @@ def cached_generate_text(
             yield "Prompt is empty, please provide a starting text."
         return
     
+    global inference_stop_signal
+    inference_stop_signal = False
+
     cache = None
     try:
         # Database integration - get model_id for saving inference history
@@ -564,6 +574,8 @@ def cached_generate_text(
         with torch.no_grad():
             with ctx:
                 for s_i in range(num_samples):
+                    if inference_stop_signal:
+                        break
                     # Reset generator seed for each sample to ensure reproducibility
                     # Each sample uses seed + sample_index for deterministic but different results
                     sample_seed = seed + s_i
@@ -591,6 +603,8 @@ def cached_generate_text(
                     generated_tokens_list = []
                     
                     for token_i in range(max_new_tokens):
+                        if inference_stop_signal:
+                            break
                         if idx.size(1) == 0:
                             err_msg = "Can't generate an empty sequence."
                             if return_detailed_info:
@@ -683,6 +697,9 @@ def cached_generate_text(
                                 yield new_text
                             last_valid_text = current_text
                     
+                    if inference_stop_signal:
+                        break
+
                     # Complete current sample
                     final_text = decode(idx[0].tolist())
                     if len(final_text) > len(last_valid_text):
@@ -711,9 +728,14 @@ def cached_generate_text(
                         else:
                             yield separator
 
-        # Save inference history to database
-        final_text = "\n\n".join(accumulated_output)
-        dbm.save_inference_history(model_id, final_text)
+        # Note: Do NOT save inference history here!
+        # When return_detailed_info=True, the UI layer (inference.py) saves the complete
+        # HTML-formatted history. Saving plain text here would overwrite html_content
+        # and advanced_html with NULL values.
+        # When return_detailed_info=False (standalone usage), we save plain text only.
+        if not return_detailed_info:
+            final_text = "\n\n".join(accumulated_output)
+            dbm.save_inference_history(model_id, final_text)
         
         # Decide whether to auto-clear cache based on parameter
         if auto_clear_cache and cache:

@@ -473,7 +473,7 @@ def train_model_generator(
         model = DDP(model, device_ids=[ddp_local_rank])
         raw_model = model.module
     
-    scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
+    scaler = torch.amp.GradScaler('cuda', enabled=(dtype == 'float16'))
 
     def get_lr(it):
         if it < warmup_iters:
