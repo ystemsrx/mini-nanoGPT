@@ -174,21 +174,33 @@ def process_data(
             return res
 
     # Load text data BEFORE registering new model to validate data first
-    data = input_text.strip()
-    if not data and input_dir.strip():
+    # Use a list to track individual documents for proper EOT token insertion
+    documents = []  # List of individual documents
+    is_multi_document = False  # Flag to indicate if we have multiple documents from directory
+    
+    if input_text.strip():
+        documents.append(input_text.strip())
+    elif input_dir.strip():
         input_dir_abs = input_dir.strip()
         if os.path.exists(input_dir_abs):
-            # Concatenate content from all .txt files in the specified directory
-            for fn in (f for f in os.listdir(input_dir_abs) if f.endswith(".txt")):
+            # Load each .txt file as a separate document
+            txt_files = sorted(f for f in os.listdir(input_dir_abs) if f.endswith(".txt"))
+            for fn in txt_files:
                 try:
                     with open(os.path.join(input_dir_abs, fn), "r", encoding="utf-8") as f_in:
-                        data += f_in.read()
+                        content = f_in.read().strip()
+                        if content:  # Only add non-empty documents
+                            documents.append(content)
                 except Exception as e:
                     print(f"Warning: Could not read file {fn}: {e}")
+            is_multi_document = len(documents) > 1
     
     # Validate data BEFORE registering new model to database
-    if not data:
+    if not documents:
         raise ValueError("No input text provided. Please check your input text or directory.")
+    
+    # Concatenate for backward compatibility (raw data saving, size calculation, etc.)
+    data = '\n'.join(documents)
 
     # Ensure data ends with a newline character for SFT compatibility
     if not data.endswith('\n'):
@@ -226,53 +238,72 @@ def process_data(
                 ) from e
 
             tok_name = "custom_json" # Tokenizer type identifier
-            chunks = get_chunks(data, actual_proc) if actual_proc > 1 else [data]
-
-            if actual_proc == 1:
-                # Single process encoding
-                tokenizer_instance = Tokenizer.from_file(str(tokenizer_path))
-                token_chunks = [tokenizer_instance.encode(c).ids for c in chunks]
-            else:
-                # Multi-process encoding: Load Tokenizer in child processes
-                with Pool(actual_proc) as pool:
-                    token_chunks = pool.starmap(
-                        _encode_custom_chunk,
-                        [(c, str(tokenizer_path)) for c in chunks]
-                    )
-            tokens_full = [t for ck in token_chunks for t in ck] # Flatten list of token lists
-
-            # Append an end-of-text token if it's defined in the tokenizer and not already present
+            
+            # First, determine the EOT token ID
             eot_id_old = None
-            # Check for common EOT token representations
-            for special_token_str in ["<|endoftext|>", "</s>", "[EOS]"]: # Add other common EOTs if needed
+            for special_token_str in ["<|endoftext|>", "</s>", "[EOS]"]: # Check common EOT representations
                 try:
-                    # Temporary tokenizer instance to get token ID
                     temp_tokenizer = Tokenizer.from_file(str(tokenizer_path))
                     eot_id_old = temp_tokenizer.token_to_id(special_token_str)
                     if eot_id_old is not None:
                         break
-                except Exception: # Handles cases where token_to_id might fail or token doesn't exist
+                except Exception:
                     pass
             
-            if eot_id_old is not None and (not tokens_full or tokens_full[-1] != eot_id_old):
-                tokens_full.append(eot_id_old)
+            # Tokenize documents with EOT token at the end of each document
+            tokens_full = []
+            tokenizer_instance = Tokenizer.from_file(str(tokenizer_path))
+            
+            if is_multi_document:
+                # Multi-document mode: add EOT after each document
+                for doc in documents:
+                    doc_tokens = tokenizer_instance.encode(doc).ids
+                    tokens_full.extend(doc_tokens)
+                    # Add EOT token after each document
+                    if eot_id_old is not None:
+                        tokens_full.append(eot_id_old)
+            else:
+                # Single document mode: use chunking for large files, add EOT only at the end
+                chunks = get_chunks(data, actual_proc) if actual_proc > 1 else [data]
+                if actual_proc == 1:
+                    token_chunks = [tokenizer_instance.encode(c).ids for c in chunks]
+                else:
+                    with Pool(actual_proc) as pool:
+                        token_chunks = pool.starmap(
+                            _encode_custom_chunk,
+                            [(c, str(tokenizer_path)) for c in chunks]
+                        )
+                tokens_full = [t for ck in token_chunks for t in ck]
+                # Append EOT token at the end if not already present
+                if eot_id_old is not None and (not tokens_full or tokens_full[-1] != eot_id_old):
+                    tokens_full.append(eot_id_old)
 
         # If assets/tokenizer.json is not found, fallback to GPT-2 (tiktoken)
         else:
             enc = tiktoken.get_encoding("gpt2")
             tok_name = "gpt2" # Tokenizer type identifier
-            chunks = get_chunks(data, actual_proc) if actual_proc > 1 else [data]
-            if actual_proc == 1:
-                token_chunks = [encode_gpt2_chunk(c, enc) for c in chunks]
-            else:
-                with Pool(actual_proc) as pool:
-                    token_chunks = pool.starmap(encode_gpt2_chunk, [(c, enc) for c in chunks])
-            tokens_full = [t for ck in token_chunks for t in ck] # Flatten
+            eot_id_old = enc.eot_token  # GPT-2 EOT token ID
             
-            # Ensure GPT-2 EOT token is appended if not present
-            if not tokens_full or tokens_full[-1] != enc.eot_token:
-                tokens_full.append(enc.eot_token)
-            eot_id_old = enc.eot_token # Original EOT token ID from GPT-2
+            tokens_full = []
+            if is_multi_document:
+                # Multi-document mode: add EOT after each document
+                for doc in documents:
+                    doc_tokens = enc.encode(doc, allowed_special={"<|endoftext|>"})
+                    tokens_full.extend(doc_tokens)
+                    # Add EOT token after each document
+                    tokens_full.append(eot_id_old)
+            else:
+                # Single document mode: use chunking for large files, add EOT only at the end
+                chunks = get_chunks(data, actual_proc) if actual_proc > 1 else [data]
+                if actual_proc == 1:
+                    token_chunks = [encode_gpt2_chunk(c, enc) for c in chunks]
+                else:
+                    with Pool(actual_proc) as pool:
+                        token_chunks = pool.starmap(encode_gpt2_chunk, [(c, enc) for c in chunks])
+                tokens_full = [t for ck in token_chunks for t in ck]
+                # Append EOT token at the end if not already present
+                if not tokens_full or tokens_full[-1] != eot_id_old:
+                    tokens_full.append(eot_id_old)
 
         # Simplify the subword vocabulary: map original token IDs to new consecutive IDs (0, 1, 2, ...)
         # This ensures the vocabulary only contains tokens actually present in the dataset,
@@ -340,25 +371,52 @@ def process_data(
     # Character-level encoding
     else:
         tok_name = "character_level" # Tokenizer type identifier
-        # Determine unique characters across all chunks (if multiprocessing)
-        if actual_proc == 1:
-            chars = sorted(list(get_unique_chars(data)))
+        
+        # Define a special EOT character for document separation (using a rarely used Unicode character)
+        EOT_CHAR = '\x03'  # ETX (End of Text) control character
+        
+        # For multi-document mode, we need to include the EOT character in the vocabulary
+        if is_multi_document:
+            # Collect all unique characters from all documents plus EOT
+            all_chars = set()
+            for doc in documents:
+                all_chars.update(set(doc))
+            all_chars.add(EOT_CHAR)
+            chars = sorted(list(all_chars))
         else:
-            with Pool(actual_proc) as pool:
-                char_sets = pool.map(get_unique_chars, get_chunks(data, actual_proc))
-            chars = sorted(list(set().union(*char_sets)))
+            # Single document mode: determine unique characters
+            if actual_proc == 1:
+                chars = sorted(list(get_unique_chars(data)))
+            else:
+                with Pool(actual_proc) as pool:
+                    char_sets = pool.map(get_unique_chars, get_chunks(data, actual_proc))
+                chars = sorted(list(set().union(*char_sets)))
 
         stoi = {ch: i for i, ch in enumerate(chars)} # Character to ID
         itos = {i: ch for ch, i in stoi.items()}    # ID to character
         vocab_size = len(chars)
+        
+        # Get EOT token ID (only valid for multi-document mode)
+        eot_char_id = stoi.get(EOT_CHAR, None)
 
-        # Encode the entire dataset
-        if actual_proc == 1:
-            encoded = encode_text_chunk(data, stoi)
+        # Encode the dataset
+        if is_multi_document:
+            # Multi-document mode: encode each document and add EOT after each
+            encoded = []
+            for doc in documents:
+                doc_encoded = [stoi.get(ch, 0) for ch in doc]
+                encoded.extend(doc_encoded)
+                # Add EOT character after each document
+                if eot_char_id is not None:
+                    encoded.append(eot_char_id)
         else:
-            with Pool(actual_proc) as pool:
-                enc_chunks = pool.starmap(encode_text_chunk, [(c, stoi) for c in get_chunks(data, actual_proc)])
-            encoded = [e for ck in enc_chunks for e in ck] # Flatten
+            # Single document mode: use chunking for large files
+            if actual_proc == 1:
+                encoded = encode_text_chunk(data, stoi)
+            else:
+                with Pool(actual_proc) as pool:
+                    enc_chunks = pool.starmap(encode_text_chunk, [(c, stoi) for c in get_chunks(data, actual_proc)])
+                encoded = [e for ck in enc_chunks for e in ck] # Flatten
 
         if no_validation:
             train_ids = np.array(encoded, dtype=IntegerTypes)
@@ -381,8 +439,14 @@ def process_data(
         if val_ids is not None:
             val_ids.tofile(os.path.join(processed_dir, "val.bin"))
 
-        # Add tokenizer information to meta
-        meta = {"vocab_size": vocab_size, "itos": itos, "stoi": stoi, "tokenizer": tok_name}
+        # Add tokenizer information to meta (include EOT token info for multi-document mode)
+        meta = {
+            "vocab_size": vocab_size,
+            "itos": itos,
+            "stoi": stoi,
+            "tokenizer": tok_name,
+            "eot_token_id": eot_char_id if is_multi_document else None  # EOT token ID for character-level
+        }
         train_sz = len(train_ids)
         val_sz = len(val_ids) if val_ids is not None else 0
 
