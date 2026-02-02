@@ -14,20 +14,24 @@ from src.utils import compose_model_dirs
 
 dbm = DBManager()
 
-# Special token IDs from Qwen tokenizer.json (required for SFT)
-# These must be included in the vocabulary even if not present in training data
+# =============================================================================
+# SFT Chat Template Required Tokens (Qwen format)
+# =============================================================================
+
+# Special control tokens (true special tokens with dedicated IDs)
 QWEN_SPECIAL_TOKEN_IDS = [
     151643,  # <|endoftext|> / EOT
     151644,  # <|im_start|>
     151645,  # <|im_end|>
 ]
 
-# Chat template role token IDs (required for SFT with Qwen chat format)
-# These are the token IDs for "system", "user", "assistant" in the Qwen tokenizer
-QWEN_CHAT_ROLE_TOKEN_IDS = [
-    8948,    # "system"
-    872,     # "user"
-    77091,   # "assistant"
+# Chat template formatting tokens (regular tokens used in chat template structure)
+# These are normal tokens that happen to be required for the chat format
+QWEN_SFT_FORMAT_TOKEN_IDS = [
+    8948,    # "system" - role identifier
+    872,     # "user" - role identifier
+    77091,   # "assistant" - role identifier
+    198,     # "\n" - newline after role names (e.g., "system\n", "user\n")
 ]
 
 def get_chunks(text, n):
@@ -186,6 +190,10 @@ def process_data(
     if not data:
         raise ValueError("No input text provided. Please check your input text or directory.")
 
+    # Ensure data ends with a newline character for SFT compatibility
+    if not data.endswith('\n'):
+        data += '\n'
+
     # Now that data is validated, register new model if needed
     if new_model:
         model_id = dbm.register_model(model_name)
@@ -268,16 +276,17 @@ def process_data(
 
         # Simplify the subword vocabulary: map original token IDs to new consecutive IDs (0, 1, 2, ...)
         # This ensures the vocabulary only contains tokens actually present in the dataset,
-        # PLUS special tokens required for SFT (Qwen chat template tokens).
+        # PLUS tokens required for SFT chat template formatting.
         used_old_ids_set = set(tokens_full)
         
-        # For custom tokenizer (Qwen), always include special tokens for SFT compatibility
+        # For custom tokenizer (Qwen), include all tokens required for SFT compatibility
         if tok_name == "custom_json":
+            # Add special control tokens (<|im_start|>, <|im_end|>, <|endoftext|>)
             for special_id in QWEN_SPECIAL_TOKEN_IDS:
                 used_old_ids_set.add(special_id)
-            # Also include chat role tokens ("system", "user", "assistant")
-            for role_id in QWEN_CHAT_ROLE_TOKEN_IDS:
-                used_old_ids_set.add(role_id)
+            # Add chat template formatting tokens (role names + newline)
+            for format_id in QWEN_SFT_FORMAT_TOKEN_IDS:
+                used_old_ids_set.add(format_id)
         
         used_old_ids = sorted(list(used_old_ids_set)) # Unique sorted original token IDs
         old2new = {old_id: new_id for new_id, old_id in enumerate(used_old_ids)}

@@ -225,6 +225,109 @@ def format_chat_for_inference(
     return result
 
 
+def greedy_tokenize_with_fallback(
+    text: str,
+    tokenizer,
+    old2new_mapping: Dict[int, int] = None,
+    return_original_ids: bool = False
+) -> Tuple[List[int], Optional[List[int]]]:
+    """
+    Tokenize text with intelligent fallback for unknown tokens.
+    
+    This function attempts to tokenize text even when some tokens are not in the
+    model's vocabulary by finding the longest valid substrings that can be tokenized.
+    
+    Strategy:
+    1. First try direct tokenization - if all tokens are in vocab, use them
+    2. For any text segment that produces unknown tokens, use greedy matching:
+       - Priority 1: Find longest substring that tokenizes to a SINGLE known token
+       - Priority 2: Find longest substring that tokenizes to ALL known tokens
+       - This maximizes token granularity (prefers larger tokens)
+    
+    Args:
+        text: Text to tokenize
+        tokenizer: HuggingFace tokenizer instance
+        old2new_mapping: Mapping from original token IDs to remapped IDs
+        return_original_ids: If True, also return original (unmapped) token IDs
+    
+    Returns:
+        Tuple of (mapped_ids, original_ids) where:
+        - mapped_ids: Token IDs after applying old2new_mapping (or original if no mapping)
+        - original_ids: Original token IDs before mapping (only if return_original_ids=True, else None)
+        
+    Raises:
+        ValueError: If a character cannot be tokenized within the model vocabulary
+    """
+    if not text:
+        return ([], []) if return_original_ids else ([], None)
+    
+    if old2new_mapping is None:
+        original_ids = tokenizer.encode(text).ids
+        return (original_ids, original_ids) if return_original_ids else (original_ids, None)
+    
+    # First try: direct tokenization
+    original_ids = tokenizer.encode(text).ids
+    if all(tid in old2new_mapping for tid in original_ids):
+        mapped_ids = [old2new_mapping[tid] for tid in original_ids]
+        return (mapped_ids, original_ids) if return_original_ids else (mapped_ids, None)
+    
+    # Some tokens are unknown - use greedy approach
+    mapped_result = []
+    original_result = []
+    pos = 0
+    text_len = len(text)
+    
+    while pos < text_len:
+        best_end = pos
+        best_mapped_ids = None
+        best_original_ids = None
+        
+        # Strategy 1: Find longest substring that tokenizes to a SINGLE known token
+        # This maximizes token granularity
+        for end in range(text_len, pos, -1):
+            substr = text[pos:end]
+            substr_ids = tokenizer.encode(substr).ids
+            
+            # Only accept if it's a single token AND that token is known
+            if len(substr_ids) == 1 and substr_ids[0] in old2new_mapping:
+                best_end = end
+                best_mapped_ids = [old2new_mapping[substr_ids[0]]]
+                best_original_ids = substr_ids
+                break
+        
+        # Strategy 2: If no single-token match, find longest all-known multi-token match
+        if best_mapped_ids is None:
+            for end in range(text_len, pos, -1):
+                substr = text[pos:end]
+                substr_ids = tokenizer.encode(substr).ids
+                
+                if all(tid in old2new_mapping for tid in substr_ids):
+                    best_end = end
+                    best_mapped_ids = [old2new_mapping[tid] for tid in substr_ids]
+                    best_original_ids = substr_ids
+                    break
+        
+        if best_mapped_ids is not None:
+            mapped_result.extend(best_mapped_ids)
+            original_result.extend(best_original_ids)
+            pos = best_end
+        else:
+            # Even a single character doesn't work - this is a truly unknown character
+            unknown_char = text[pos]
+            char_ids = tokenizer.encode(unknown_char).ids
+            if char_ids and char_ids[0] in old2new_mapping:
+                mapped_result.append(old2new_mapping[char_ids[0]])
+                original_result.append(char_ids[0])
+            else:
+                # Character not in vocabulary at all
+                raise ValueError(
+                    f"Character '{unknown_char}' (U+{ord(unknown_char):04X}) at position {pos} cannot be tokenized within model vocabulary."
+                )
+            pos += 1
+    
+    return (mapped_result, original_result) if return_original_ids else (mapped_result, None)
+
+
 def tokenize_sft_sample(
     sample: Dict,
     tokenizer,
@@ -277,12 +380,24 @@ def tokenize_sft_sample(
     # Apply full chat template (with assistant's response)
     full_text = apply_chat_template(instruction, input_text, output, system_prompt)
     
-    # Tokenize full text (this gives original token IDs from the tokenizer)
-    original_tokens = tokenizer.encode(full_text).ids
+    # Tokenize full text using greedy fallback algorithm
+    # This handles cases where some tokens in the SFT data are not in the model's vocabulary
+    # by intelligently splitting text into known token sequences
+    try:
+        tokens, original_tokens = greedy_tokenize_with_fallback(
+            full_text, tokenizer, old2new_mapping, return_original_ids=True
+        )
+    except ValueError as e:
+        # Character completely unknown - skip this sample
+        if return_error:
+            return (None, f"token_not_in_vocab:{str(e)}")
+        return None
     
     # C1) Find the boundary where assistant's response starts
     # Use complete marker tokenization for more reliable boundary detection
     # This avoids token boundary misalignment issues from separate tokenization
+    # Note: We need to use original_tokens for boundary detection since the pattern
+    # matching relies on original token IDs (before remapping)
     assistant_header = f"{IM_START_TOKEN}assistant\n"
     assistant_header_tokens = tokenizer.encode(assistant_header).ids
     
@@ -313,26 +428,14 @@ def tokenize_sft_sample(
     prompt_length = matches[0]
     
     # Truncate if sequence is too long (instead of skipping)
-    if len(original_tokens) > max_seq_length:
+    if len(tokens) > max_seq_length:
+        tokens = tokens[:max_seq_length]
         original_tokens = original_tokens[:max_seq_length]
         # If prompt itself exceeds max_seq_length, skip this sample (no assistant content left)
         if prompt_length >= max_seq_length:
             if return_error:
                 return (None, f"prompt_too_long:{prompt_length}>{max_seq_length}")
             return None
-    
-    # Remap token IDs if mapping is provided (model was trained with remapped IDs)
-    if old2new_mapping is not None:
-        tokens = []
-        for orig_id in original_tokens:
-            if orig_id not in old2new_mapping:
-                # Token not in vocabulary - skip this sample
-                if return_error:
-                    return (None, f"token_not_in_vocab:{orig_id}")
-                return None
-            tokens.append(old2new_mapping[orig_id])
-    else:
-        tokens = original_tokens
     
     # Validate token IDs are within vocab range
     if vocab_size is not None:
@@ -662,8 +765,13 @@ def sft_train_generator(
                 error_reason = result[1]
                 if error_reason.startswith("token_not_in_vocab:"):
                     error_stats["token_not_in_vocab"] += 1
-                    token_id = error_reason.split(":")[1]
-                    missing_token_ids.add(int(token_id))
+
+                    token_info = error_reason.split(":", 1)[1]  # Use maxsplit=1 to preserve colons in message
+                    try:
+                        missing_token_ids.add(int(token_info))
+                    except ValueError:
+                        # It's a character error message, not a token ID - skip adding to missing_token_ids
+                        pass
                 elif error_reason.startswith("prompt_too_long:"):
                     error_stats["prompt_too_long"] += 1
                 elif error_reason.startswith("token_out_of_range:"):
@@ -1107,7 +1215,7 @@ def sft_train_generator(
         
     except Exception as e:
         yield (make_progress_html(0, 1, 'red'),
-               f"SFT training error: {str(e)}",
+               f"Error: {str(e)}",
                empty_plot_data)
 
 
@@ -1182,88 +1290,11 @@ def chat_generate(
     elif top_k > vocab_size:
         top_k = vocab_size  # Clamp to vocab size
     
-    # Greedy tokenization function that handles unknown tokens by finding
-    # the longest valid substrings that can be tokenized within vocabulary
-    def greedy_tokenize_with_fallback(text: str) -> List[int]:
-        """
-        Tokenize text with intelligent fallback for unknown tokens.
-        
-        Strategy:
-        1. First try direct tokenization - if all tokens are in vocab, use them
-        2. For any text segment that produces unknown tokens, use greedy matching:
-           - Priority 1: Find longest substring that tokenizes to a SINGLE known token
-           - Priority 2: Find longest substring that tokenizes to ALL known tokens
-           - This maximizes token granularity (prefers larger tokens)
-        
-        Example: "…………" (4 ellipsis chars) with vocab containing only "……" (2 chars):
-        - Tokenizer would produce [38325] (unknown merged token)
-        - This function splits it into "……" + "……" = [14053, 14053] (both known)
-        """
-        if not text:
-            return []
-        
-        if old2new_mapping is None:
-            return tokenizer.encode(text).ids
-        
-        # First try: direct tokenization
-        original_ids = tokenizer.encode(text).ids
-        if all(tid in old2new_mapping for tid in original_ids):
-            return [old2new_mapping[tid] for tid in original_ids]
-        
-        # Some tokens are unknown - use greedy approach
-        result = []
-        pos = 0
-        text_len = len(text)
-        
-        while pos < text_len:
-            best_end = pos
-            best_ids = None
-            
-            # Strategy 1: Find longest substring that tokenizes to a SINGLE known token
-            # This maximizes token granularity
-            for end in range(text_len, pos, -1):
-                substr = text[pos:end]
-                substr_ids = tokenizer.encode(substr).ids
-                
-                # Only accept if it's a single token AND that token is known
-                if len(substr_ids) == 1 and substr_ids[0] in old2new_mapping:
-                    best_end = end
-                    best_ids = [old2new_mapping[substr_ids[0]]]
-                    break
-            
-            # Strategy 2: If no single-token match, find longest all-known multi-token match
-            if best_ids is None:
-                for end in range(text_len, pos, -1):
-                    substr = text[pos:end]
-                    substr_ids = tokenizer.encode(substr).ids
-                    
-                    if all(tid in old2new_mapping for tid in substr_ids):
-                        best_end = end
-                        best_ids = [old2new_mapping[tid] for tid in substr_ids]
-                        break
-            
-            if best_ids is not None:
-                result.extend(best_ids)
-                pos = best_end
-            else:
-                # Even a single character doesn't work - this is a truly unknown character
-                unknown_char = text[pos]
-                char_ids = tokenizer.encode(unknown_char).ids
-                if char_ids and char_ids[0] in old2new_mapping:
-                    result.append(old2new_mapping[char_ids[0]])
-                else:
-                    # Character not in vocabulary at all
-                    raise ValueError(
-                        f"Character '{unknown_char}' at position {pos} cannot be tokenized within model vocabulary."
-                    )
-                pos += 1
-        
-        return result
-    
-    # Helper function to tokenize text and map to model vocabulary
+    # Helper function to tokenize text and map to model vocabulary using greedy fallback
     def tokenize_and_map(text: str) -> List[int]:
         """Tokenize text and map to model's token IDs using greedy fallback."""
-        return greedy_tokenize_with_fallback(text)
+        mapped_ids, _ = greedy_tokenize_with_fallback(text, tokenizer, old2new_mapping)
+        return mapped_ids
     
     # Build input token IDs
     # If history_token_ids is provided, use it directly for history (avoids re-tokenization issues)
