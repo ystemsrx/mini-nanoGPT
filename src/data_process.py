@@ -3,6 +3,7 @@ import os
 import pickle
 import math
 import json
+import random
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
@@ -173,7 +174,7 @@ def load_jsonl_file(file_path: Path) -> list[str]:
     return documents
 
 
-def load_documents_from_directory(directory: str | Path, num_proc: int = 1) -> tuple[list[str], dict]:
+def load_documents_from_directory(directory: str | Path, num_proc: int = 1) -> tuple[list[tuple[list[str], str]], dict]:
     """
     Recursively load all supported files from a directory and its subdirectories.
     Uses parallel processing for multiple files when num_proc > 1.
@@ -187,12 +188,13 @@ def load_documents_from_directory(directory: str | Path, num_proc: int = 1) -> t
         num_proc: Number of processes to use for parallel file loading
         
     Returns:
-        A tuple of (documents, stats) where:
-            - documents: List of text documents extracted from files
+        A tuple of (file_documents, stats) where:
+            - file_documents: List of (documents, file_type) tuples, each representing one file
+              where documents is a list of text strings and file_type is 'txt' or 'jsonl'
             - stats: Dictionary with file processing statistics
     """
     directory = Path(directory)
-    documents = []
+    file_documents = []  # List of (documents, file_type) tuples
     stats = {
         'total_files': 0,
         'txt_files': 0,
@@ -218,7 +220,7 @@ def load_documents_from_directory(directory: str | Path, num_proc: int = 1) -> t
     stats['total_files'] = len(all_files)
     
     if not all_files:
-        return documents, stats
+        return file_documents, stats
     
     # Determine actual number of processes to use
     actual_proc = min(num_proc, len(all_files), cpu_count())
@@ -249,7 +251,7 @@ def load_documents_from_directory(directory: str | Path, num_proc: int = 1) -> t
                 try:
                     file_docs, file_type = future.result()
                     if file_docs:
-                        documents.extend(file_docs)
+                        file_documents.append((file_docs, file_type))
                         if file_type == 'txt':
                             stats['txt_files'] += 1
                         else:
@@ -265,7 +267,7 @@ def load_documents_from_directory(directory: str | Path, num_proc: int = 1) -> t
             file_docs = load_text_file(Path(file_path))
             if file_docs:
                 stats['txt_files'] += 1
-                documents.extend(file_docs)
+                file_documents.append((file_docs, 'txt'))
             else:
                 stats['failed_files'] += 1
         
@@ -273,11 +275,11 @@ def load_documents_from_directory(directory: str | Path, num_proc: int = 1) -> t
             file_docs = load_jsonl_file(Path(file_path))
             if file_docs:
                 stats['jsonl_files'] += 1
-                documents.extend(file_docs)
+                file_documents.append((file_docs, 'jsonl'))
             else:
                 stats['failed_files'] += 1
     
-    stats['total_documents'] = len(documents)
+    stats['total_documents'] = sum(len(docs) for docs, _ in file_documents)
     
     # Print summary
     print(f"Directory scan complete:")
@@ -287,7 +289,7 @@ def load_documents_from_directory(directory: str | Path, num_proc: int = 1) -> t
     print(f"  - Failed files: {stats['failed_files']}")
     print(f"  - Total documents extracted: {stats['total_documents']}")
     
-    return documents, stats
+    return file_documents, stats
 
 # =============================================================================
 # SFT Chat Template Required Tokens (Qwen format)
@@ -394,6 +396,9 @@ def process_data(
     - Only tokens that actually appear in the input data are saved in the vocabulary.
       These tokens are remapped to consecutive integer IDs starting from 0.
     """
+    
+    random.seed(42)
+    
     # For new models, we defer registration until data is validated and processed
     # This prevents creating empty model entries when data processing fails
     model_id = None  # Will be set after validation for new models
@@ -469,17 +474,23 @@ def process_data(
 
     # Load text data BEFORE registering new model to validate data first
     # Use a list to track individual documents for proper EOT token insertion
-    documents = []  # List of individual documents
+    # file_documents: List of (documents, file_type) tuples for per-file processing
+    file_documents = []  # List of (documents_list, file_type) tuples
+    documents = []  # Flat list of all documents (for backward compatibility)
     is_multi_document = False  # Flag to indicate if we have multiple documents from directory
     
     if input_text.strip():
         documents.append(input_text.strip())
+        file_documents.append(([input_text.strip()], 'txt'))  # Treat direct input as txt
     elif input_dir.strip():
         input_dir_abs = input_dir.strip()
         if os.path.exists(input_dir_abs):
             # Recursively load all supported files (.txt, .jsonl) from directory and subdirectories
             # Use parallel file loading with num_proc processes
-            documents, load_stats = load_documents_from_directory(input_dir_abs, num_proc=num_proc)
+            file_documents, load_stats = load_documents_from_directory(input_dir_abs, num_proc=num_proc)
+            # Flatten to documents list for backward compatibility
+            for docs, _ in file_documents:
+                documents.extend(docs)
             is_multi_document = len(documents) > 1
     
     # Validate data BEFORE registering new model to database
@@ -553,16 +564,79 @@ def process_data(
                 pass
         
         # Tokenize documents with EOT token at the end of each document
-        tokens_full = []
         tokenizer_instance = Tokenizer.from_file(str(tokenizer_path))
         
-        if is_multi_document:
-            # Multi-document mode: parallel processing with EOT after each document
-            # Only use multiprocessing when we have enough documents to justify the overhead
-            # Minimum threshold: actual_proc * 2 documents (at least 2 docs per process)
+        # For multi-document mode with validation, we use hybrid stratified sampling:
+        # - JSONL files: randomly shuffle documents, then split by document count (preserves document integrity)
+        # - TXT files: split by token ratio (each document is split proportionally)
+        # This ensures each data source is represented in both train and val sets.
+        use_stratified_split = is_multi_document and not no_validation
+        
+        if use_stratified_split:
+            # Stratified sampling mode: process each file independently based on its type
+            train_tokens_full = []
+            val_tokens_full = []
+            
+            # Process each file separately
+            for file_docs, file_type in file_documents:
+                if not file_docs:
+                    continue
+                
+                # Tokenize all documents in this file
+                min_docs_for_parallel = max(actual_proc * 2, 10)
+                if actual_proc > 1 and len(file_docs) >= min_docs_for_parallel:
+                    # Parallel tokenization
+                    args_list = [(doc, eot_id_old) for doc in file_docs]
+                    with Pool(actual_proc, initializer=_init_tokenizer_pool, initargs=(str(tokenizer_path),)) as pool:
+                        results = pool.map(_encode_document_custom, args_list)
+                    file_token_lists = [(doc_tokens, eot_id) for doc_tokens, eot_id in results]
+                else:
+                    # Sequential tokenization
+                    file_token_lists = []
+                    for doc in file_docs:
+                        doc_tokens = tokenizer_instance.encode(doc).ids
+                        file_token_lists.append((doc_tokens, eot_id_old))
+                
+                if file_type == 'jsonl':
+                    # JSONL files: randomly assign whole documents to train/val sets
+                    # This preserves document integrity (no mid-document splits)
+                    indices = list(range(len(file_token_lists)))
+                    random.shuffle(indices)
+                    split_idx = int(len(indices) * train_split_ratio)
+                    train_indices = set(indices[:split_idx])
+                    
+                    for i, (doc_tokens, eot_id) in enumerate(file_token_lists):
+                        if not doc_tokens:
+                            continue
+                        doc_tokens_with_eot = list(doc_tokens)
+                        if eot_id is not None:
+                            doc_tokens_with_eot.append(eot_id)
+                        
+                        if i in train_indices:
+                            train_tokens_full.extend(doc_tokens_with_eot)
+                        else:
+                            val_tokens_full.extend(doc_tokens_with_eot)
+                else:
+                    # TXT files: split each document by token ratio
+                    for doc_tokens, eot_id in file_token_lists:
+                        if not doc_tokens:
+                            continue
+                        doc_tokens_with_eot = list(doc_tokens)
+                        if eot_id is not None:
+                            doc_tokens_with_eot.append(eot_id)
+                        
+                        # Split this document by ratio
+                        split_at = int(len(doc_tokens_with_eot) * train_split_ratio)
+                        train_tokens_full.extend(doc_tokens_with_eot[:split_at])
+                        val_tokens_full.extend(doc_tokens_with_eot[split_at:])
+            
+            tokens_full = train_tokens_full + val_tokens_full  # For vocabulary building
+            
+        elif is_multi_document:
+            # Multi-document mode without validation: just concatenate all
+            tokens_full = []
             min_docs_for_parallel = max(actual_proc * 2, 10)
             if actual_proc > 1 and len(documents) >= min_docs_for_parallel:
-                # Use multiprocessing for multiple documents with pre-loaded tokenizer
                 args_list = [(doc, eot_id_old) for doc in documents]
                 with Pool(actual_proc, initializer=_init_tokenizer_pool, initargs=(str(tokenizer_path),)) as pool:
                     results = pool.map(_encode_document_custom, args_list)
@@ -571,7 +645,6 @@ def process_data(
                     if eot_id is not None:
                         tokens_full.append(eot_id)
             else:
-                # Single process for few documents (avoid process pool overhead)
                 for doc in documents:
                     doc_tokens = tokenizer_instance.encode(doc).ids
                     tokens_full.extend(doc_tokens)
@@ -583,11 +656,9 @@ def process_data(
             if actual_proc == 1:
                 token_chunks = [tokenizer_instance.encode(c).ids for c in chunks]
             else:
-                # Use pool with pre-loaded tokenizer
                 with Pool(actual_proc, initializer=_init_tokenizer_pool, initargs=(str(tokenizer_path),)) as pool:
                     token_chunks = pool.map(_encode_custom_chunk, chunks)
             tokens_full = [t for ck in token_chunks for t in ck]
-            # Append EOT token at the end if not already present
             if eot_id_old is not None and (not tokens_full or tokens_full[-1] != eot_id_old):
                 tokens_full.append(eot_id_old)
 
@@ -619,7 +690,13 @@ def process_data(
                     print(f"Removed old validation set file: {val_bin_path}")
                 except OSError as e:
                     print(f"Warning: Could not remove old validation set file {val_bin_path}: {e}")
+        elif use_stratified_split:
+            # Stratified sampling: use pre-split train/val tokens (already split per-document)
+            train_tokens_remapped = [old2new[t] for t in train_tokens_full]
+            val_tokens_remapped = [old2new[t] for t in val_tokens_full]
+            splits = {"train": train_tokens_remapped, "val": val_tokens_remapped}
         else:
+            # Global split for single document mode
             split_at = int(len(tokens) * train_split_ratio)
             splits = {"train": tokens[:split_at], "val": tokens[split_at:]}
 
@@ -686,14 +763,78 @@ def process_data(
         
         # Get EOT token ID (only valid for multi-document mode)
         eot_char_id = stoi.get(EOT_CHAR, None)
+        
+        # For multi-document mode with validation, we use hybrid stratified sampling:
+        # - JSONL files: randomly shuffle documents, then split by document count
+        # - TXT files: split by character ratio
+        use_stratified_split_char = is_multi_document and not no_validation
 
         # Encode the dataset
-        if is_multi_document:
-            # Multi-document mode: parallel processing with EOT after each document
-            # Only use multiprocessing when we have enough documents
+        if use_stratified_split_char:
+            # Stratified sampling mode: process each file independently based on its type
+            train_encoded = []
+            val_encoded = []
+            
+            # Process each file separately
+            for file_docs, file_type in file_documents:
+                if not file_docs:
+                    continue
+                
+                # Encode all documents in this file
+                min_docs_for_parallel = max(actual_proc * 2, 10)
+                if actual_proc > 1 and len(file_docs) >= min_docs_for_parallel:
+                    # Parallel encoding
+                    args_list = [(doc, stoi, eot_char_id) for doc in file_docs]
+                    with Pool(actual_proc) as pool:
+                        results = pool.map(_encode_document_char, args_list)
+                    file_token_lists = [(doc_tokens, eot_id) for doc_tokens, eot_id in results]
+                else:
+                    # Sequential encoding
+                    file_token_lists = []
+                    for doc in file_docs:
+                        doc_tokens = [stoi.get(ch, 0) for ch in doc]
+                        file_token_lists.append((doc_tokens, eot_char_id))
+                
+                if file_type == 'jsonl':
+                    # JSONL files: randomly assign whole documents to train/val sets
+                    indices = list(range(len(file_token_lists)))
+                    random.shuffle(indices)
+                    split_idx = int(len(indices) * train_split_ratio)
+                    train_indices = set(indices[:split_idx])
+                    
+                    for i, (doc_tokens, eot_id) in enumerate(file_token_lists):
+                        if not doc_tokens:
+                            continue
+                        doc_tokens_with_eot = list(doc_tokens)
+                        if eot_id is not None:
+                            doc_tokens_with_eot.append(eot_id)
+                        
+                        if i in train_indices:
+                            train_encoded.extend(doc_tokens_with_eot)
+                        else:
+                            val_encoded.extend(doc_tokens_with_eot)
+                else:
+                    # TXT files: split each document by ratio
+                    for doc_tokens, eot_id in file_token_lists:
+                        if not doc_tokens:
+                            continue
+                        doc_tokens_with_eot = list(doc_tokens)
+                        if eot_id is not None:
+                            doc_tokens_with_eot.append(eot_id)
+                        
+                        # Split this document by ratio
+                        split_at = int(len(doc_tokens_with_eot) * train_split_ratio)
+                        train_encoded.extend(doc_tokens_with_eot[:split_at])
+                        val_encoded.extend(doc_tokens_with_eot[split_at:])
+            
+            # Set train/val ids directly from stratified split
+            train_ids = np.array(train_encoded, dtype=IntegerTypes)
+            val_ids = np.array(val_encoded, dtype=IntegerTypes)
+            
+        elif is_multi_document:
+            # Multi-document mode without validation: just concatenate all
             min_docs_for_parallel = max(actual_proc * 2, 10)
             if actual_proc > 1 and len(documents) >= min_docs_for_parallel:
-                # Use multiprocessing for multiple documents
                 args_list = [(doc, stoi, eot_char_id) for doc in documents]
                 with Pool(actual_proc) as pool:
                     results = pool.map(_encode_document_char, args_list)
@@ -703,13 +844,14 @@ def process_data(
                     if eot_id is not None:
                         encoded.append(eot_id)
             else:
-                # Single process for few documents (avoid process pool overhead)
                 encoded = []
                 for doc in documents:
                     doc_encoded = [stoi.get(ch, 0) for ch in doc]
                     encoded.extend(doc_encoded)
                     if eot_char_id is not None:
                         encoded.append(eot_char_id)
+            train_ids = np.array(encoded, dtype=IntegerTypes)
+            val_ids = None
         else:
             # Single document mode: use chunking for large files
             if actual_proc == 1:
@@ -718,11 +860,18 @@ def process_data(
                 with Pool(actual_proc) as pool:
                     enc_chunks = pool.starmap(encode_text_chunk, [(c, stoi) for c in get_chunks(data, actual_proc)])
                 encoded = [e for ck in enc_chunks for e in ck] # Flatten
+            
+            # Global split for single document
+            if no_validation:
+                train_ids = np.array(encoded, dtype=IntegerTypes)
+                val_ids = None
+            else:
+                split_at = int(len(encoded) * train_split_ratio)
+                train_ids = np.array(encoded[:split_at], dtype=IntegerTypes)
+                val_ids = np.array(encoded[split_at:], dtype=IntegerTypes)
 
+        # Handle no_validation for multi-document mode (remove old val.bin if exists)
         if no_validation:
-            train_ids = np.array(encoded, dtype=IntegerTypes)
-            val_ids = None # Explicitly set to None
-            # Remove any existing old validation set file
             val_bin_path = os.path.join(processed_dir, "val.bin")
             if os.path.exists(val_bin_path):
                 try:
@@ -730,10 +879,6 @@ def process_data(
                     print(f"Removed old validation set file: {val_bin_path}")
                 except OSError as e:
                     print(f"Warning: Could not remove old validation set file {val_bin_path}: {e}")
-        else:
-            split_at = int(len(encoded) * train_split_ratio)
-            train_ids = np.array(encoded[:split_at], dtype=IntegerTypes)
-            val_ids = np.array(encoded[split_at:], dtype=IntegerTypes)
 
         # Save processed data
         train_ids.tofile(os.path.join(processed_dir, "train.bin"))
