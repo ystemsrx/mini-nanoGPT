@@ -8,7 +8,7 @@ from src.ui.helpers import _get_model_choices_list
 def data_processing_cb(
     new_flag, model_name, dropdown_val,
     txt, ddir,
-    sp, no_val, use_gpt2_tokenizer, num_proc_,
+    sp, no_val, use_custom_tokenizer, num_proc_,
     lang_code,
 ):
     try:
@@ -23,7 +23,7 @@ def data_processing_cb(
             input_dir=ddir,
             train_split_ratio=sp,
             no_validation=no_val,
-            use_gpt2_tokenizer=use_gpt2_tokenizer,
+            use_custom_tokenizer=use_custom_tokenizer,
             num_proc=int(num_proc_),
         )
         new_choices = _get_model_choices_list()

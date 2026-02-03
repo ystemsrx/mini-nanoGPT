@@ -85,27 +85,6 @@ def _tokenize_prompt_for_display(data_dir: str, prompt: str):
 
                     tokenizer = Tokenizer.from_file(str(tokenizer_path))
                     prompt_tokens = tokenize_user_input(tokenizer, prompt, old2new_mapping)
-            elif tokenizer_type == "gpt2" and old2new_mapping:
-                import tiktoken
-
-                enc = tiktoken.get_encoding("gpt2")
-                ids = enc.encode(prompt, allowed_special={"<|endoftext|>"})
-                prompt_tokens = []
-                for orig_id in ids:
-                    try:
-                        decoded_text = enc.decode([orig_id])
-                    except Exception:
-                        decoded_text = f"<token_{orig_id}>"
-                    mapped_id = old2new_mapping.get(orig_id, orig_id)
-                    in_vocab = orig_id in old2new_mapping
-                    prompt_tokens.append(
-                        {
-                            "text": decoded_text,
-                            "original_id": orig_id,
-                            "mapped_id": mapped_id,
-                            "in_vocab": in_vocab,
-                        }
-                    )
             else:
                 stoi = meta.get("stoi", {})
                 prompt_tokens = []

@@ -73,27 +73,6 @@ def inference_cb(
 
                         tokenizer = Tokenizer.from_file(str(tokenizer_path))
                         prompt_tokens = tokenize_user_input(tokenizer, prompt_, old2new_mapping)
-                elif tokenizer_type == "gpt2" and old2new_mapping:
-                    import tiktoken
-
-                    enc = tiktoken.get_encoding("gpt2")
-                    ids = enc.encode(prompt_, allowed_special={"<|endoftext|>"})
-                    prompt_tokens = []
-                    for orig_id in ids:
-                        try:
-                            decoded_text = enc.decode([orig_id])
-                        except Exception:
-                            decoded_text = f"<token_{orig_id}>"
-                        mapped_id = old2new_mapping.get(orig_id, orig_id)
-                        in_vocab = orig_id in old2new_mapping
-                        prompt_tokens.append(
-                            {
-                                "text": decoded_text,
-                                "original_id": orig_id,
-                                "mapped_id": mapped_id,
-                                "in_vocab": in_vocab,
-                            }
-                        )
                 else:
                     # Character level tokenization
                     stoi = meta.get("stoi", {})

@@ -54,7 +54,7 @@ def build_app_interface(selected_lang: str = "zh"):
                 with gr.Row():
                     input_text = gr.Textbox(label=T["dp_paste_text"], lines=19.5)
                     with gr.Column():
-                        txt_dir = gr.Textbox(label=T["dp_txt_dir"], value="")
+                        txt_dir = gr.Textbox(label=T["dp_data_dir"], value="")
                         new_model_chk = gr.Checkbox(label=T["new_model"], value=True)
                         model_name_box = gr.Textbox(label=T["model_name"], value="new_model")
                         with gr.Row():
@@ -62,9 +62,9 @@ def build_app_interface(selected_lang: str = "zh"):
                                 label=T["dp_no_val_set"],
                                 value=DEFAULT_CONFIG["data_process"]["no_validation"],
                             )
-                            use_gpt2 = gr.Checkbox(
-                                label=T["dp_use_gpt2_tokenizer"],
-                                value=DEFAULT_CONFIG["data_process"]["use_gpt2_tokenizer"],
+                            use_custom_tokenizer = gr.Checkbox(
+                                label=T["dp_use_custom_tokenizer"],
+                                value=DEFAULT_CONFIG["data_process"]["use_custom_tokenizer"],
                             )
                         train_split = gr.Slider(
                             label=T["dp_train_split"],
@@ -820,7 +820,7 @@ def build_app_interface(selected_lang: str = "zh"):
             txt_dir,
             train_split,
             no_val_set,
-            use_gpt2,
+            use_custom_tokenizer,
             num_proc,
             lang_select,
             process_output,
@@ -1067,7 +1067,7 @@ def build_app_interface(selected_lang: str = "zh"):
             input_text,
             txt_dir,
             no_val_set,
-            use_gpt2,
+            use_custom_tokenizer,
             train_split,
             num_proc,
             process_btn,

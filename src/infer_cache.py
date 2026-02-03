@@ -312,44 +312,23 @@ class ModelCache:
                         if tokenizer_type == 'custom_json':
                             try:
                                 from tokenizers import Tokenizer
-                                tokenizer_path = os.path.join(Path.cwd(), "assets/tokenizer.json")
-                                if os.path.exists(tokenizer_path):
-                                    tokenizer = Tokenizer.from_file(tokenizer_path)
-                                    
-                                    def encode(s):
-                                        ids = tokenizer.encode(s).ids
-                                        # Check for unknown tokens (not in old2new mapping)
-                                        unknown_tokens = [id for id in ids if id not in old2new]
-                                        if unknown_tokens:
-                                            raise UnknownTokenError(unknown_tokens)
-                                        return [old2new[id] for id in ids]
-                                    
-                                    def decode(l):
-                                        original_ids = [new2old.get(id, new2old.get(0, 0)) for id in l]
-                                        return safe_decode(tokenizer.decode, original_ids)
-                                else:
-                                    def encode(s):
-                                        unknown_chars = [ch for ch in s if ch not in stoi]
-                                        if unknown_chars:
-                                            raise UnknownTokenError(unknown_chars)
-                                        return [stoi[ch] for ch in s]
-                                    def decode(l):
-                                        return ''.join([itos.get(i, '') for i in l])
-                            except ImportError:
-                                def encode(s):
-                                    unknown_chars = [ch for ch in s if ch not in stoi]
-                                    if unknown_chars:
-                                        raise UnknownTokenError(unknown_chars)
-                                    return [stoi[ch] for ch in s]
-                                def decode(l):
-                                    return ''.join([itos.get(i, '') for i in l])
-                        
-                        elif tokenizer_type == 'gpt2':
-                            import tiktoken
-                            enc = tiktoken.get_encoding("gpt2")
+                            except ImportError as e:
+                                raise ImportError(
+                                    "Model was trained with custom tokenizer, but the `tokenizers` library is not installed. "
+                                    "Please install it by running: pip install tokenizers"
+                                ) from e
+                            
+                            tokenizer_path = os.path.join(Path.cwd(), "assets/tokenizer.json")
+                            if not os.path.exists(tokenizer_path):
+                                raise FileNotFoundError(
+                                    f"Model was trained with custom tokenizer, but tokenizer file not found: {tokenizer_path}. "
+                                    "Please ensure assets/tokenizer.json exists."
+                                )
+                            
+                            tokenizer = Tokenizer.from_file(tokenizer_path)
                             
                             def encode(s):
-                                ids = enc.encode(s, allowed_special={"<|endoftext|>"})
+                                ids = tokenizer.encode(s).ids
                                 # Check for unknown tokens (not in old2new mapping)
                                 unknown_tokens = [id for id in ids if id not in old2new]
                                 if unknown_tokens:
@@ -358,7 +337,7 @@ class ModelCache:
                             
                             def decode(l):
                                 original_ids = [new2old.get(id, new2old.get(0, 0)) for id in l]
-                                return safe_decode(enc.decode, original_ids)
+                                return safe_decode(tokenizer.decode, original_ids)
                         
                         else:
                             def encode(s):

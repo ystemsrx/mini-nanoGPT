@@ -467,7 +467,7 @@ class GPTSelfAttn(nn.Module):
             # Apply transformer blocks with optional gradient checkpointing
             for i, block in enumerate(self.blocks):
                 if self.config.gradient_checkpointing and self.training:
-                    x = torch.utils.checkpoint.checkpoint(block, x)
+                    x = torch.utils.checkpoint.checkpoint(block, x, use_reentrant=False)
                 else:
                     x = block(x)
             

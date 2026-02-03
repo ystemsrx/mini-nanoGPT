@@ -2,11 +2,11 @@
 """
 # Mini-NanoGPT
 
-Based on karpathy/nanoGPT with a GUI and extended features that make GPT model training intuitive and accessible. Currently implements native GPT training, with GPT-2 fine-tuning in development.
+Based on karpathy/nanoGPT with a GUI and extended features that make GPT model training intuitive and accessible.
 
 - 🚀 One-click data processing, training and inference
 - 🎨 Real-time training visualization and logging
-- 🔧 Character-level and Qwen/GPT-2 tokenizer support
+- 🔧 Character-level and custom tokenizer support (Qwen, etc.)
 - 💾 Checkpoint resume and model evaluation
 - 🌏 Multi-language interface (English/Chinese)
 - 📊 Rich learning rate scheduling options

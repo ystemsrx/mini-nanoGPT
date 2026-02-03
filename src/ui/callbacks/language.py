@@ -22,9 +22,9 @@ def switch_language(lang_code: str):
         gr.update(label=Tn["model_name"]),
         # Data processing panel
         gr.update(label=Tn["dp_paste_text"]),
-        gr.update(label=Tn["dp_txt_dir"]),
+        gr.update(label=Tn["dp_data_dir"]),
         gr.update(label=Tn["dp_no_val_set"]),
-        gr.update(label=Tn["dp_use_gpt2_tokenizer"]),
+        gr.update(label=Tn["dp_use_custom_tokenizer"]),
         gr.update(label=Tn["dp_train_split"]),
         gr.update(label=Tn["dp_num_proc"]),
         gr.update(value=Tn["dp_start_btn"]),

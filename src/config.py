@@ -19,7 +19,7 @@ DEFAULT_CONFIG = {
     "data_process": {
         "train_split_ratio": 0.9,
         "no_validation": False,
-        "use_gpt2_tokenizer": True,
+        "use_custom_tokenizer": True,
         "num_proc": cpu_count() // 2
     },
     "training": {
@@ -136,12 +136,12 @@ LANG_JSON = {
         "model_name": "Model Name",
 
         "dp_paste_text": "Paste Text",
-        "dp_txt_dir": "TXT Directory (Optional)",
+        "dp_data_dir": "Data Directory (Optional)",
         "dp_raw_dir": "Raw Data Directory",
         "dp_processed_dir": "Processed Data Directory",
         "dp_train_split": "Training Split Ratio",
         "dp_no_val_set": "Do not use validation set",
-        "dp_use_gpt2_tokenizer": "Use GPT-2/Qwen Tokenizer",
+        "dp_use_custom_tokenizer": "Use /assets/tokenizer.json Tokenizer",
         "dp_num_proc": "Number of Processes",
         "dp_start_btn": "Start Processing",
         "dp_result": "Processing Result",
@@ -348,12 +348,12 @@ LANG_JSON = {
         "model_name": "模型名称",
 
         "dp_paste_text": "粘贴文本",
-        "dp_txt_dir": "TXT文件目录（可选）",
+        "dp_data_dir": "数据目录（可选）",
         "dp_raw_dir": "原始数据目录",
         "dp_processed_dir": "处理后数据目录",
         "dp_train_split": "训练集比例 (Training Split Ratio)",
         "dp_no_val_set": "暂不需要验证集",
-        "dp_use_gpt2_tokenizer": "使用 GPT-2/Qwen 分词器 (Use GPT-2/Qwen Tokenizer)",
+        "dp_use_custom_tokenizer": "使用 /assets/tokenizer.json 分词器",
         "dp_num_proc": "进程数 (Number of processes)",
         "dp_start_btn": "开始处理",
         "dp_result": "处理结果",

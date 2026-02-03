@@ -5,11 +5,16 @@ import math
 import json
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from functools import partial
 
 import numpy as np
-import tiktoken
 
 from src.config import DEFAULT_CONFIG, IntegerTypes
+
+# Global tokenizer instance for multiprocessing (initialized by pool initializer)
+_global_tokenizer = None
+_global_tokenizer_path = None
 from src.db_manager import DBManager
 from src.utils import compose_model_dirs
 
@@ -41,6 +46,113 @@ def load_text_file(file_path: Path) -> list[str]:
     return []
 
 
+def _init_tokenizer_pool(tokenizer_path: str):
+    """
+    Initializer function for multiprocessing Pool.
+    Loads the tokenizer once per worker process.
+    """
+    global _global_tokenizer, _global_tokenizer_path
+    from tokenizers import Tokenizer
+    _global_tokenizer = Tokenizer.from_file(tokenizer_path)
+    _global_tokenizer_path = tokenizer_path
+
+
+def _parse_json_line(line_data: tuple) -> str | None:
+    """
+    Parse a single JSON line (for parallel processing).
+    
+    Args:
+        line_data: Tuple of (line_num, line_content, file_path_str)
+        
+    Returns:
+        Extracted text or None if parsing failed
+    """
+    line_num, line, file_path_str = line_data
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        obj = json.loads(line)
+        if isinstance(obj, dict) and 'text' in obj:
+            text = obj['text']
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+    except json.JSONDecodeError:
+        pass
+    return None
+
+
+# Threshold for enabling parallel JSON parsing within a single JSONL file
+# Files with more lines than this will use ThreadPool for parsing
+JSONL_PARALLEL_LINE_THRESHOLD = 5000
+
+
+def _load_and_parse_jsonl_file(file_path: str) -> tuple[list[str], str]:
+    """
+    Load and parse a JSONL file with parallel JSON parsing for large files.
+    This function is designed for multiprocessing - it handles the entire file in one process.
+    
+    Args:
+        file_path: Path to the .jsonl file
+        
+    Returns:
+        Tuple of (documents list, file_type string)
+    """
+    file_path = Path(file_path)
+    documents = []
+    
+    try:
+        # Read all lines first
+        with open(file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        # For large files, use thread pool for parallel JSON parsing
+        # ThreadPool is efficient here because JSON parsing releases GIL during string operations
+        if len(lines) > JSONL_PARALLEL_LINE_THRESHOLD:
+            line_data = [(i + 1, line, str(file_path)) for i, line in enumerate(lines)]
+            
+            # Use ThreadPoolExecutor for CPU-bound JSON parsing within this process
+            # Limit workers to avoid excessive context switching
+            num_workers = min(4, cpu_count())
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                results = list(executor.map(_parse_json_line, line_data))
+            
+            documents = [r for r in results if r is not None]
+        else:
+            # For smaller files, parse sequentially (avoid thread overhead)
+            for line_num, line in enumerate(lines, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    if isinstance(obj, dict) and 'text' in obj:
+                        text = obj['text']
+                        if isinstance(text, str) and text.strip():
+                            documents.append(text.strip())
+                except json.JSONDecodeError:
+                    pass
+                    
+    except Exception as e:
+        print(f"Warning: Could not read file {file_path}: {e}")
+    
+    return (documents, 'jsonl')
+
+
+def _load_text_file_for_pool(file_path: str) -> tuple[list[str], str]:
+    """
+    Load a text file (wrapper for multiprocessing).
+    
+    Args:
+        file_path: Path to the .txt file
+        
+    Returns:
+        Tuple of (documents list, file_type string)
+    """
+    docs = load_text_file(Path(file_path))
+    return (docs, 'txt')
+
+
 def load_jsonl_file(file_path: Path) -> list[str]:
     """
     Load a JSONL file where each line contains a JSON object with a "text" field.
@@ -57,31 +169,14 @@ def load_jsonl_file(file_path: Path) -> list[str]:
     Returns:
         List of text contents extracted from the JSONL file
     """
-    documents = []
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for line_num, line in enumerate(f, 1):
-                line = line.strip()
-                if not line:  # Skip empty lines
-                    continue
-                try:
-                    obj = json.loads(line)
-                    if isinstance(obj, dict) and 'text' in obj:
-                        text = obj['text']
-                        if isinstance(text, str) and text.strip():
-                            documents.append(text.strip())
-                    else:
-                        print(f"Warning: Line {line_num} in {file_path} does not contain a 'text' field, skipping")
-                except json.JSONDecodeError as e:
-                    print(f"Warning: Invalid JSON at line {line_num} in {file_path}: {e}")
-    except Exception as e:
-        print(f"Warning: Could not read file {file_path}: {e}")
+    documents, _ = _load_and_parse_jsonl_file(str(file_path))
     return documents
 
 
-def load_documents_from_directory(directory: str | Path) -> tuple[list[str], dict]:
+def load_documents_from_directory(directory: str | Path, num_proc: int = 1) -> tuple[list[str], dict]:
     """
     Recursively load all supported files from a directory and its subdirectories.
+    Uses parallel processing for multiple files when num_proc > 1.
     
     Supported formats:
         - .txt: Plain text files (entire file as one document)
@@ -89,6 +184,7 @@ def load_documents_from_directory(directory: str | Path) -> tuple[list[str], dic
     
     Args:
         directory: Path to the directory to scan
+        num_proc: Number of processes to use for parallel file loading
         
     Returns:
         A tuple of (documents, stats) where:
@@ -105,28 +201,81 @@ def load_documents_from_directory(directory: str | Path) -> tuple[list[str], dic
         'total_documents': 0
     }
     
-    # Recursively find all supported files
+    # Collect all file paths first
+    txt_files = []
+    jsonl_files = []
+    
     for ext in SUPPORTED_EXTENSIONS:
         for file_path in sorted(directory.rglob(f'*{ext}')):
             if not file_path.is_file():
                 continue
-                
-            stats['total_files'] += 1
-            
             if ext == '.txt':
-                file_docs = load_text_file(file_path)
-                if file_docs:
-                    stats['txt_files'] += 1
-                    documents.extend(file_docs)
-                else:
-                    stats['failed_files'] += 1
+                txt_files.append(str(file_path))
             elif ext == '.jsonl':
-                file_docs = load_jsonl_file(file_path)
-                if file_docs:
-                    stats['jsonl_files'] += 1
-                    documents.extend(file_docs)
+                jsonl_files.append(str(file_path))
+    
+    all_files = txt_files + jsonl_files
+    stats['total_files'] = len(all_files)
+    
+    if not all_files:
+        return documents, stats
+    
+    # Determine actual number of processes to use
+    actual_proc = min(num_proc, len(all_files), cpu_count())
+    
+    # Process files in parallel if we have multiple files and multiple processes
+    if actual_proc > 1 and len(all_files) > 1:
+        print(f"Loading {len(all_files)} files using {actual_proc} processes...")
+        
+        # Prepare tasks: (file_path, loader_function)
+        tasks = []
+        for f in txt_files:
+            tasks.append((f, 'txt'))
+        for f in jsonl_files:
+            tasks.append((f, 'jsonl'))
+        
+        # Use ProcessPoolExecutor for true parallel file loading
+        with ProcessPoolExecutor(max_workers=actual_proc) as executor:
+            # Submit tasks based on file type
+            futures = []
+            for file_path, file_type in tasks:
+                if file_type == 'txt':
+                    futures.append(executor.submit(_load_text_file_for_pool, file_path))
                 else:
+                    futures.append(executor.submit(_load_and_parse_jsonl_file, file_path))
+            
+            # Collect results
+            for future in futures:
+                try:
+                    file_docs, file_type = future.result()
+                    if file_docs:
+                        documents.extend(file_docs)
+                        if file_type == 'txt':
+                            stats['txt_files'] += 1
+                        else:
+                            stats['jsonl_files'] += 1
+                    else:
+                        stats['failed_files'] += 1
+                except Exception as e:
+                    print(f"Warning: Failed to process file: {e}")
                     stats['failed_files'] += 1
+    else:
+        # Sequential processing for single file or single process
+        for file_path in txt_files:
+            file_docs = load_text_file(Path(file_path))
+            if file_docs:
+                stats['txt_files'] += 1
+                documents.extend(file_docs)
+            else:
+                stats['failed_files'] += 1
+        
+        for file_path in jsonl_files:
+            file_docs = load_jsonl_file(Path(file_path))
+            if file_docs:
+                stats['jsonl_files'] += 1
+                documents.extend(file_docs)
+            else:
+                stats['failed_files'] += 1
     
     stats['total_documents'] = len(documents)
     
@@ -179,22 +328,43 @@ def encode_text_chunk(chunk, stoi):
     """
     return [stoi.get(ch, 0) for ch in chunk] # Use 0 for unknown characters
 
-def encode_gpt2_chunk(chunk, tokenizer):
+def _encode_custom_chunk(chunk: str):
     """
-    Encodes a chunk of text using GPT-2 tokenizer.
-    """
-    return tokenizer.encode(chunk, allowed_special={"<|endoftext|>"})
-
-def _encode_custom_chunk(chunk: str, tokenizer_path: str):
-    """
-    Loads a local tokenizer from tokenizer_path (e.g., assets/tokenizer.json)
-    and encodes a chunk of text.
+    Encodes a chunk of text using the global tokenizer.
     This function is designed to be used with multiprocessing,
-    where the tokenizer is loaded in each child process.
+    where the tokenizer is pre-loaded by the pool initializer.
     """
-    from tokenizers import Tokenizer # Import here for multiprocessing compatibility
-    tok = Tokenizer.from_file(tokenizer_path)
-    return tok.encode(chunk).ids
+    global _global_tokenizer
+    return _global_tokenizer.encode(chunk).ids
+
+
+def _encode_document_custom(args: tuple):
+    """
+    Encode a single document using custom tokenizer (for multiprocessing).
+    Uses the global tokenizer pre-loaded by pool initializer.
+    Returns (doc_tokens, eot_id) where eot_id should be appended after doc_tokens.
+    """
+    global _global_tokenizer
+    doc, eot_id = args
+    doc_tokens = _global_tokenizer.encode(doc).ids
+    return (doc_tokens, eot_id)
+
+
+def _encode_document_char(args: tuple):
+    """
+    Encode a single document at character level (for multiprocessing).
+    Returns (doc_tokens, eot_id) where eot_id should be appended after doc_tokens.
+    """
+    doc, stoi, eot_id = args
+    doc_tokens = [stoi.get(ch, 0) for ch in doc]
+    return (doc_tokens, eot_id)
+
+
+def _get_unique_chars_from_doc(doc: str):
+    """
+    Get unique characters from a single document (for multiprocessing).
+    """
+    return set(doc)
 
 
 def process_data(
@@ -206,7 +376,7 @@ def process_data(
     input_dir: str = "",
     train_split_ratio: float = DEFAULT_CONFIG["data_process"]["train_split_ratio"],
     no_validation: bool = DEFAULT_CONFIG["data_process"]["no_validation"],
-    use_gpt2_tokenizer: bool = DEFAULT_CONFIG["data_process"]["use_gpt2_tokenizer"],
+    use_custom_tokenizer: bool = DEFAULT_CONFIG["data_process"]["use_custom_tokenizer"],
     num_proc: int = DEFAULT_CONFIG["data_process"]["num_proc"]
 ):
     """
@@ -216,13 +386,11 @@ def process_data(
     1. Determines model ID and associated file paths.
     2. Loads text from direct input or a directory.
     3. Tokenizes the text using either a custom tokenizer (if `assets/tokenizer.json` exists
-       and `use_gpt2_tokenizer` is true), GPT-2 tokenizer (fallback if custom one is not found
-       or if `use_gpt2_tokenizer` is true), or character-level encoding.
+       and `use_custom_tokenizer` is true), or character-level encoding.
     4. Splits data into training and validation sets (unless `no_validation` is true).
     5. Saves processed data (token IDs) to .bin files and metadata (vocabulary, etc.) to meta.pkl.
 
-    - If `use_gpt2_tokenizer` is checked, it first attempts to use `assets/tokenizer.json`.
-      If not found, it falls back to the GPT-2 tokenizer.
+    - If `use_custom_tokenizer` is checked, it uses `assets/tokenizer.json`.
     - Only tokens that actually appear in the input data are saved in the vocabulary.
       These tokens are remapped to consecutive integer IDs starting from 0.
     """
@@ -310,7 +478,8 @@ def process_data(
         input_dir_abs = input_dir.strip()
         if os.path.exists(input_dir_abs):
             # Recursively load all supported files (.txt, .jsonl) from directory and subdirectories
-            documents, load_stats = load_documents_from_directory(input_dir_abs)
+            # Use parallel file loading with num_proc processes
+            documents, load_stats = load_documents_from_directory(input_dir_abs, num_proc=num_proc)
             is_multi_document = len(documents) > 1
     
     # Validate data BEFORE registering new model to database
@@ -338,90 +507,89 @@ def process_data(
 
     # Tokenize and split data
     size_mb = len(data.encode("utf-8")) / 1024 / 1024
-    # Use single process for small files to avoid overhead of multiprocessing
-    actual_proc = min(num_proc, cpu_count()) if size_mb > 100 else 1
+    num_documents = len(documents)
+    
+    # Determine actual number of processes for tokenization
+    # Enable parallel processing when:
+    # 1. Data size > 10MB (enough data to justify process overhead), OR
+    # 2. Multi-document mode with > 100 documents (many small docs benefit from parallelism)
+    # Limit by num_proc setting and available CPUs
+    if size_mb > 10 or (is_multi_document and num_documents > 100):
+        actual_proc = min(num_proc, cpu_count())
+    else:
+        actual_proc = 1
 
-    # Use tokenizer (assets/tokenizer.json or GPT-2)
-    if use_gpt2_tokenizer:
+    # Use custom tokenizer (assets/tokenizer.json)
+    if use_custom_tokenizer:
         tokenizer_path = Path.cwd() / "assets/tokenizer.json"
 
-        # If assets/tokenizer.json exists in the root directory, use HuggingFace Tokenizers
-        if tokenizer_path.exists():
-            try:
-                from tokenizers import Tokenizer # Check for 'tokenizers' library dependency
-            except ImportError as e:
-                raise ImportError(
-                    "Detected assets/tokenizer.json, but the `tokenizers` library is not installed. "
-                    "Please install it by running: pip install tokenizers"
-                ) from e
+        # Check if assets/tokenizer.json exists
+        if not tokenizer_path.exists():
+            raise FileNotFoundError(
+                "Custom tokenizer enabled but assets/tokenizer.json not found. "
+                "Please place your tokenizer.json file in the assets directory, "
+                "or uncheck 'Use custom tokenizer' to use character-level encoding."
+            )
+        
+        try:
+            from tokenizers import Tokenizer  # Check for 'tokenizers' library dependency
+        except ImportError as e:
+            raise ImportError(
+                "Detected assets/tokenizer.json, but the `tokenizers` library is not installed. "
+                "Please install it by running: pip install tokenizers"
+            ) from e
 
-            tok_name = "custom_json" # Tokenizer type identifier
-            
-            # First, determine the EOT token ID
-            eot_id_old = None
-            for special_token_str in ["<|endoftext|>", "</s>", "[EOS]"]: # Check common EOT representations
-                try:
-                    temp_tokenizer = Tokenizer.from_file(str(tokenizer_path))
-                    eot_id_old = temp_tokenizer.token_to_id(special_token_str)
-                    if eot_id_old is not None:
-                        break
-                except Exception:
-                    pass
-            
-            # Tokenize documents with EOT token at the end of each document
-            tokens_full = []
-            tokenizer_instance = Tokenizer.from_file(str(tokenizer_path))
-            
-            if is_multi_document:
-                # Multi-document mode: add EOT after each document
+        tok_name = "custom_json"  # Tokenizer type identifier
+        
+        # First, determine the EOT token ID
+        eot_id_old = None
+        for special_token_str in ["<|endoftext|>", "</s>", "[EOS]"]:  # Check common EOT representations
+            try:
+                temp_tokenizer = Tokenizer.from_file(str(tokenizer_path))
+                eot_id_old = temp_tokenizer.token_to_id(special_token_str)
+                if eot_id_old is not None:
+                    break
+            except Exception:
+                pass
+        
+        # Tokenize documents with EOT token at the end of each document
+        tokens_full = []
+        tokenizer_instance = Tokenizer.from_file(str(tokenizer_path))
+        
+        if is_multi_document:
+            # Multi-document mode: parallel processing with EOT after each document
+            # Only use multiprocessing when we have enough documents to justify the overhead
+            # Minimum threshold: actual_proc * 2 documents (at least 2 docs per process)
+            min_docs_for_parallel = max(actual_proc * 2, 10)
+            if actual_proc > 1 and len(documents) >= min_docs_for_parallel:
+                # Use multiprocessing for multiple documents with pre-loaded tokenizer
+                args_list = [(doc, eot_id_old) for doc in documents]
+                with Pool(actual_proc, initializer=_init_tokenizer_pool, initargs=(str(tokenizer_path),)) as pool:
+                    results = pool.map(_encode_document_custom, args_list)
+                for doc_tokens, eot_id in results:
+                    tokens_full.extend(doc_tokens)
+                    if eot_id is not None:
+                        tokens_full.append(eot_id)
+            else:
+                # Single process for few documents (avoid process pool overhead)
                 for doc in documents:
                     doc_tokens = tokenizer_instance.encode(doc).ids
                     tokens_full.extend(doc_tokens)
-                    # Add EOT token after each document
                     if eot_id_old is not None:
                         tokens_full.append(eot_id_old)
-            else:
-                # Single document mode: use chunking for large files, add EOT only at the end
-                chunks = get_chunks(data, actual_proc) if actual_proc > 1 else [data]
-                if actual_proc == 1:
-                    token_chunks = [tokenizer_instance.encode(c).ids for c in chunks]
-                else:
-                    with Pool(actual_proc) as pool:
-                        token_chunks = pool.starmap(
-                            _encode_custom_chunk,
-                            [(c, str(tokenizer_path)) for c in chunks]
-                        )
-                tokens_full = [t for ck in token_chunks for t in ck]
-                # Append EOT token at the end if not already present
-                if eot_id_old is not None and (not tokens_full or tokens_full[-1] != eot_id_old):
-                    tokens_full.append(eot_id_old)
-
-        # If assets/tokenizer.json is not found, fallback to GPT-2 (tiktoken)
         else:
-            enc = tiktoken.get_encoding("gpt2")
-            tok_name = "gpt2" # Tokenizer type identifier
-            eot_id_old = enc.eot_token  # GPT-2 EOT token ID
-            
-            tokens_full = []
-            if is_multi_document:
-                # Multi-document mode: add EOT after each document
-                for doc in documents:
-                    doc_tokens = enc.encode(doc, allowed_special={"<|endoftext|>"})
-                    tokens_full.extend(doc_tokens)
-                    # Add EOT token after each document
-                    tokens_full.append(eot_id_old)
+            # Single document mode: use chunking for large files, add EOT only at the end
+            chunks = get_chunks(data, actual_proc) if actual_proc > 1 else [data]
+            if actual_proc == 1:
+                token_chunks = [tokenizer_instance.encode(c).ids for c in chunks]
             else:
-                # Single document mode: use chunking for large files, add EOT only at the end
-                chunks = get_chunks(data, actual_proc) if actual_proc > 1 else [data]
-                if actual_proc == 1:
-                    token_chunks = [encode_gpt2_chunk(c, enc) for c in chunks]
-                else:
-                    with Pool(actual_proc) as pool:
-                        token_chunks = pool.starmap(encode_gpt2_chunk, [(c, enc) for c in chunks])
-                tokens_full = [t for ck in token_chunks for t in ck]
-                # Append EOT token at the end if not already present
-                if not tokens_full or tokens_full[-1] != eot_id_old:
-                    tokens_full.append(eot_id_old)
+                # Use pool with pre-loaded tokenizer
+                with Pool(actual_proc, initializer=_init_tokenizer_pool, initargs=(str(tokenizer_path),)) as pool:
+                    token_chunks = pool.map(_encode_custom_chunk, chunks)
+            tokens_full = [t for ck in token_chunks for t in ck]
+            # Append EOT token at the end if not already present
+            if eot_id_old is not None and (not tokens_full or tokens_full[-1] != eot_id_old):
+                tokens_full.append(eot_id_old)
 
         # Simplify the subword vocabulary: map original token IDs to new consecutive IDs (0, 1, 2, ...)
         # This ensures the vocabulary only contains tokens actually present in the dataset,
@@ -462,15 +630,10 @@ def process_data(
             np.array(seq, dtype=np.uint32).tofile(os.path.join(processed_dir, f"{sp}.bin"))
 
         # Build meta.pkl content
-        if tokenizer_path.exists() and tok_name == "custom_json":
-            # For a custom assets/tokenizer.json, use HuggingFace Tokenizer's decode method
-            tokenizer_for_meta = Tokenizer.from_file(str(tokenizer_path))
-            # Create itos (ID to string) mapping using the new consecutive IDs
-            itos = {new_id: tokenizer_for_meta.decode([old_id]) for old_id, new_id in old2new.items()}
-        else:
-            # For GPT-2 fallback, use tiktoken's decode method
-            # Ensure enc is defined (it will be if tok_name is "gpt2")
-            itos = {new_id: enc.decode([old_id]) for old_id, new_id in old2new.items()}
+        # Use HuggingFace Tokenizer's decode method
+        tokenizer_for_meta = Tokenizer.from_file(str(tokenizer_path))
+        # Create itos (ID to string) mapping using the new consecutive IDs
+        itos = {new_id: tokenizer_for_meta.decode([old_id]) for old_id, new_id in old2new.items()}
 
         stoi = {s: i for i, s in itos.items()} # String to ID mapping
         vocab_size = len(itos)
@@ -495,10 +658,17 @@ def process_data(
         
         # For multi-document mode, we need to include the EOT character in the vocabulary
         if is_multi_document:
-            # Collect all unique characters from all documents plus EOT
-            all_chars = set()
-            for doc in documents:
-                all_chars.update(set(doc))
+            # Collect all unique characters from all documents plus EOT (parallel processing)
+            # Only use multiprocessing when we have enough documents
+            min_docs_for_parallel = max(actual_proc * 2, 10)
+            if actual_proc > 1 and len(documents) >= min_docs_for_parallel:
+                with Pool(actual_proc) as pool:
+                    char_sets = pool.map(_get_unique_chars_from_doc, documents)
+                all_chars = set().union(*char_sets)
+            else:
+                all_chars = set()
+                for doc in documents:
+                    all_chars.update(set(doc))
             all_chars.add(EOT_CHAR)
             chars = sorted(list(all_chars))
         else:
@@ -519,14 +689,27 @@ def process_data(
 
         # Encode the dataset
         if is_multi_document:
-            # Multi-document mode: encode each document and add EOT after each
-            encoded = []
-            for doc in documents:
-                doc_encoded = [stoi.get(ch, 0) for ch in doc]
-                encoded.extend(doc_encoded)
-                # Add EOT character after each document
-                if eot_char_id is not None:
-                    encoded.append(eot_char_id)
+            # Multi-document mode: parallel processing with EOT after each document
+            # Only use multiprocessing when we have enough documents
+            min_docs_for_parallel = max(actual_proc * 2, 10)
+            if actual_proc > 1 and len(documents) >= min_docs_for_parallel:
+                # Use multiprocessing for multiple documents
+                args_list = [(doc, stoi, eot_char_id) for doc in documents]
+                with Pool(actual_proc) as pool:
+                    results = pool.map(_encode_document_char, args_list)
+                encoded = []
+                for doc_tokens, eot_id in results:
+                    encoded.extend(doc_tokens)
+                    if eot_id is not None:
+                        encoded.append(eot_id)
+            else:
+                # Single process for few documents (avoid process pool overhead)
+                encoded = []
+                for doc in documents:
+                    doc_encoded = [stoi.get(ch, 0) for ch in doc]
+                    encoded.extend(doc_encoded)
+                    if eot_char_id is not None:
+                        encoded.append(eot_char_id)
         else:
             # Single document mode: use chunking for large files
             if actual_proc == 1:

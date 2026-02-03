@@ -58,7 +58,7 @@ Or simply curious about large language models and want to experience their magic
 
 ### ⚡ Powerful Features
 
-- 🔤 **Flexible Tokenization** — Character-level, GPT-2, or Qwen tokenizers
+- 🔤 **Flexible Tokenization** — Character-level or custom tokenizers (Qwen, etc.)
 - 🚄 **Efficient Training** — Multi-process acceleration & distributed training
 - 📊 **Real-time Feedback** — Live training progress and loss curves
 

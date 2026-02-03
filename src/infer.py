@@ -217,51 +217,25 @@ def generate_text(
             if tokenizer_type == 'custom_json':
                 try:
                     from tokenizers import Tokenizer
-                    # Changed to use the same search path as data_process.py
-                    tokenizer_path = os.path.join(Path.cwd(), "assets/tokenizer.json")
-                    if os.path.exists(tokenizer_path):
-                        tokenizer = Tokenizer.from_file(tokenizer_path)
-
-                        def encode(s):
-                            # Ensure the full prompt is tokenized correctly.
-                            ids = tokenizer.encode(s).ids
-                            # Check for unknown tokens (not in old2new mapping)
-                            unknown_tokens = [id for id in ids if id not in old2new]
-                            if unknown_tokens:
-                                raise UnknownTokenError(unknown_tokens)
-                            return [old2new[id] for id in ids]
-
-                        def decode(l):
-                            # Use a default value strategy to process all tokens.
-                            original_ids = [new2old.get(id, new2old.get(0, 0)) for id in l]
-                            return safe_decode(tokenizer.decode, original_ids)
-                    else:
-                        # Tokenizer file not found warning.
-                        print(f"Warning: fail to find tokenizer file: {tokenizer_path}")
-                        # Use mappings from meta.
-                        def encode(s):
-                            unknown_chars = [ch for ch in s if ch not in stoi]
-                            if unknown_chars:
-                                raise UnknownTokenError(unknown_chars)
-                            return [stoi[ch] for ch in s]
-                        def decode(l):
-                            return ''.join([itos.get(i, '') for i in l])
-                except ImportError:
-                    # Tokenizers library not found, use mappings from meta.
-                    def encode(s):
-                        unknown_chars = [ch for ch in s if ch not in stoi]
-                        if unknown_chars:
-                            raise UnknownTokenError(unknown_chars)
-                        return [stoi[ch] for ch in s]
-                    def decode(l):
-                        return ''.join([itos.get(i, '') for i in l])
-
-            elif tokenizer_type == 'gpt2':
-                import tiktoken
-                enc = tiktoken.get_encoding("gpt2")
+                except ImportError as e:
+                    raise ImportError(
+                        "Model was trained with custom tokenizer, but the `tokenizers` library is not installed. "
+                        "Please install it by running: pip install tokenizers"
+                    ) from e
+                
+                # Changed to use the same search path as data_process.py
+                tokenizer_path = os.path.join(Path.cwd(), "assets/tokenizer.json")
+                if not os.path.exists(tokenizer_path):
+                    raise FileNotFoundError(
+                        f"Model was trained with custom tokenizer, but tokenizer file not found: {tokenizer_path}. "
+                        "Please ensure assets/tokenizer.json exists."
+                    )
+                
+                tokenizer = Tokenizer.from_file(tokenizer_path)
 
                 def encode(s):
-                    ids = enc.encode(s, allowed_special={"<|endoftext|>"})
+                    # Ensure the full prompt is tokenized correctly.
+                    ids = tokenizer.encode(s).ids
                     # Check for unknown tokens (not in old2new mapping)
                     unknown_tokens = [id for id in ids if id not in old2new]
                     if unknown_tokens:
@@ -271,7 +245,7 @@ def generate_text(
                 def decode(l):
                     # Use a default value strategy to process all tokens.
                     original_ids = [new2old.get(id, new2old.get(0, 0)) for id in l]
-                    return safe_decode(enc.decode, original_ids)
+                    return safe_decode(tokenizer.decode, original_ids)
 
             else:
                 # Default method.
@@ -360,7 +334,7 @@ def generate_text(
 
                         # Attempt to decode the current token sequence.
                         # When using a tokenizer, decode the sequence.
-                        if old2new is not None and tokenizer_type in ['custom_json', 'gpt2']:
+                        if old2new is not None and tokenizer_type == 'custom_json':
                             # Decode the entire sequence.
                             full_tokens = idx[0].tolist()
                             current_text = decode(full_tokens)

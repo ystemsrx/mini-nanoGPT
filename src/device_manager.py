@@ -311,5 +311,22 @@ class DeviceManager:
             self._monitor_thread.join(timeout=2.0)
 
 
-# Global device manager instance
-device_manager = DeviceManager()
+class _LazyDeviceManager:
+    """
+    Lazy wrapper for DeviceManager to avoid device discovery in subprocess workers.
+    DeviceManager is only initialized when first accessed, preventing redundant
+    device discovery prints when multiprocessing spawns worker processes.
+    """
+    _instance: DeviceManager | None = None
+    _lock = threading.Lock()
+    
+    def __getattr__(self, name):
+        if _LazyDeviceManager._instance is None:
+            with _LazyDeviceManager._lock:
+                if _LazyDeviceManager._instance is None:
+                    _LazyDeviceManager._instance = DeviceManager()
+        return getattr(_LazyDeviceManager._instance, name)
+
+
+# Global device manager instance (lazy initialization)
+device_manager = _LazyDeviceManager()

@@ -597,7 +597,7 @@ def sft_train_generator(
         if missing_special_tokens:
             yield (make_progress_html(0, 1, 'red'),
                    f"Error: Special tokens required for SFT are missing from vocabulary: {', '.join(missing_special_tokens)}. "
-                   f"Please re-process the training data with 'Use GPT2 Tokenizer' option (which uses the custom Qwen tokenizer). "
+                   f"Please re-process the training data with 'Use /assets/tokenizer.json Tokenizer' option enabled. "
                    f"The data processing will now automatically include these special tokens.",
                    empty_plot_data)
             return
