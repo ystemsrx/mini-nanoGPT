@@ -269,11 +269,11 @@ def select_model_cb(sel: str):
 
     scheduler_type = _cfg("lr_scheduler_type", d_train_defaults["lr_scheduler_type"])
     warmup_update, lr_decay_update, min_lr_update, step_size_update, step_gamma_update, polynomial_power_update = (
-        update_lr_scheduler_params(scheduler_type)
+        update_lr_scheduler_params(scheduler_type, cfg)
     )
 
     use_self_attention = _cfg("use_self_attention", d_train_defaults["use_self_attention"])
-    self_attn_updates = update_self_attention_params(use_self_attention)
+    self_attn_updates = update_self_attention_params(use_self_attention, cfg)
 
     base_updates = [
         gr.update(value=False),

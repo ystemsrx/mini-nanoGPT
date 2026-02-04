@@ -14,8 +14,19 @@ def stop_training_cb():
     return "🛑 Stopping training...", gr.update(interactive=True), gr.update(interactive=False)
 
 
-def update_lr_scheduler_params(scheduler_type):
+def update_lr_scheduler_params(scheduler_type, cfg=None):
+    """Update visibility of lr scheduler parameters based on scheduler type
+    
+    Args:
+        scheduler_type: The type of learning rate scheduler
+        cfg: Optional config dict to load saved values from. If None, uses defaults.
+    """
     defaults_train = DEFAULT_CONFIG["training"]
+
+    def _val(key):
+        if cfg and key in cfg:
+            return cfg[key]
+        return defaults_train[key]
 
     # Use None for disabled Number components to avoid type errors
     warmup_update = gr.update(interactive=False, value=None)
@@ -28,25 +39,25 @@ def update_lr_scheduler_params(scheduler_type):
     if scheduler_type == "none":
         pass
     elif scheduler_type == "cosine":
-        warmup_update = gr.update(interactive=True, value=defaults_train["warmup_iters"])
-        lr_decay_update = gr.update(interactive=True, value=defaults_train["lr_decay_iters"])
-        min_lr_update = gr.update(interactive=True, value=defaults_train["min_lr"])
+        warmup_update = gr.update(interactive=True, value=_val("warmup_iters"))
+        lr_decay_update = gr.update(interactive=True, value=_val("lr_decay_iters"))
+        min_lr_update = gr.update(interactive=True, value=_val("min_lr"))
     elif scheduler_type == "constant_with_warmup":
-        warmup_update = gr.update(interactive=True, value=defaults_train["warmup_iters"])
+        warmup_update = gr.update(interactive=True, value=_val("warmup_iters"))
     elif scheduler_type == "linear":
-        warmup_update = gr.update(interactive=True, value=defaults_train["warmup_iters"])
-        lr_decay_update = gr.update(interactive=True, value=defaults_train["lr_decay_iters"])
-        min_lr_update = gr.update(interactive=True, value=defaults_train["min_lr"])
+        warmup_update = gr.update(interactive=True, value=_val("warmup_iters"))
+        lr_decay_update = gr.update(interactive=True, value=_val("lr_decay_iters"))
+        min_lr_update = gr.update(interactive=True, value=_val("min_lr"))
     elif scheduler_type == "step":
-        warmup_update = gr.update(interactive=True, value=defaults_train["warmup_iters"])
-        min_lr_update = gr.update(interactive=True, value=defaults_train["min_lr"])
-        step_size_update = gr.update(interactive=True, value=defaults_train["step_size"])
-        step_gamma_update = gr.update(interactive=True, value=defaults_train["step_gamma"])
+        warmup_update = gr.update(interactive=True, value=_val("warmup_iters"))
+        min_lr_update = gr.update(interactive=True, value=_val("min_lr"))
+        step_size_update = gr.update(interactive=True, value=_val("step_size"))
+        step_gamma_update = gr.update(interactive=True, value=_val("step_gamma"))
     elif scheduler_type == "polynomial":
-        warmup_update = gr.update(interactive=True, value=defaults_train["warmup_iters"])
-        lr_decay_update = gr.update(interactive=True, value=defaults_train["lr_decay_iters"])
-        min_lr_update = gr.update(interactive=True, value=defaults_train["min_lr"])
-        polynomial_power_update = gr.update(interactive=True, value=defaults_train["polynomial_power"])
+        warmup_update = gr.update(interactive=True, value=_val("warmup_iters"))
+        lr_decay_update = gr.update(interactive=True, value=_val("lr_decay_iters"))
+        min_lr_update = gr.update(interactive=True, value=_val("min_lr"))
+        polynomial_power_update = gr.update(interactive=True, value=_val("polynomial_power"))
 
     return [
         warmup_update, lr_decay_update, min_lr_update,
@@ -54,31 +65,41 @@ def update_lr_scheduler_params(scheduler_type):
     ]
 
 
-def update_self_attention_params(use_self_attention):
-    """Update visibility of self-attention parameters based on checkbox"""
+def update_self_attention_params(use_self_attention, cfg=None):
+    """Update visibility of self-attention parameters based on checkbox
+    
+    Args:
+        use_self_attention: Whether self-attention is enabled
+        cfg: Optional config dict to load saved values from. If None, uses defaults.
+    """
     defaults_train = DEFAULT_CONFIG["training"]
+
+    def _val(key):
+        if cfg and key in cfg:
+            return cfg[key]
+        return defaults_train[key]
 
     if use_self_attention:
         return [
-            gr.update(visible=True, value=defaults_train["ffn_hidden_mult"]),
-            gr.update(visible=True, value=defaults_train["qkv_bias"]),
-            gr.update(visible=True, value=defaults_train["attn_dropout"]),
-            gr.update(visible=True, value=defaults_train["resid_dropout"]),
-            gr.update(visible=True, value=defaults_train["ln_eps"]),
-            gr.update(visible=True, value=defaults_train["init_std"]),
-            gr.update(visible=True, value=defaults_train["use_flash_attn"]),
-            gr.update(visible=True, value=defaults_train["pos_encoding_type"]),
-            gr.update(visible=True, value=defaults_train["rope_base"]),
+            gr.update(visible=True, value=_val("ffn_hidden_mult")),
+            gr.update(visible=True, value=_val("qkv_bias")),
+            gr.update(visible=True, value=_val("attn_dropout")),
+            gr.update(visible=True, value=_val("resid_dropout")),
+            gr.update(visible=True, value=_val("ln_eps")),
+            gr.update(visible=True, value=_val("init_std")),
+            gr.update(visible=True, value=_val("use_flash_attn")),
+            gr.update(visible=True, value=_val("pos_encoding_type")),
+            gr.update(visible=True, value=_val("rope_base")),
             # New optimized parameters
-            gr.update(visible=True, value=defaults_train["rope_cache_size"]),
-            gr.update(visible=True, value=defaults_train["alibi_bias_scale"]),
-            gr.update(visible=True, value=defaults_train["ffn_activation"]),
-            gr.update(visible=True, value=defaults_train["attention_scale_factor"]),
-            gr.update(visible=True, value=defaults_train["gradient_checkpointing"]),
-            gr.update(visible=True, value=defaults_train["cache_strategy"]),
-            gr.update(visible=True, value=defaults_train["max_cache_size"]),
-            gr.update(visible=True, value=defaults_train["strict_validation"]),
-            gr.update(visible=True, value=defaults_train["fallback_on_error"]),
+            gr.update(visible=True, value=_val("rope_cache_size")),
+            gr.update(visible=True, value=_val("alibi_bias_scale")),
+            gr.update(visible=True, value=_val("ffn_activation")),
+            gr.update(visible=True, value=_val("attention_scale_factor")),
+            gr.update(visible=True, value=_val("gradient_checkpointing")),
+            gr.update(visible=True, value=_val("cache_strategy")),
+            gr.update(visible=True, value=_val("max_cache_size")),
+            gr.update(visible=True, value=_val("strict_validation")),
+            gr.update(visible=True, value=_val("fallback_on_error")),
         ]
 
     return [
