@@ -11,6 +11,7 @@ from src.config import DEFAULT_CONFIG
 from src.db_manager import DBManager
 from src.gpt_model import GPTConfig, GPT
 from src.gpt_self_attn import GPTSelfAttnConfig, GPTSelfAttn
+from src.sft import greedy_tokenize_with_fallback
 
 
 class UnknownTokenError(Exception):
@@ -249,13 +250,18 @@ def generate_text(
                 tokenizer = Tokenizer.from_file(tokenizer_path)
 
                 def encode(s):
-                    # Ensure the full prompt is tokenized correctly.
-                    ids = tokenizer.encode(s).ids
-                    # Check for unknown tokens (not in old2new mapping)
-                    unknown_tokens = [id for id in ids if id not in old2new]
-                    if unknown_tokens:
-                        raise UnknownTokenError(unknown_tokens)
-                    return [old2new[id] for id in ids]
+                    # Use greedy tokenization with fallback for unknown tokens
+                    # This attempts to find valid token sequences even when some tokens
+                    # are not in the model's vocabulary
+                    try:
+                        mapped_ids, _ = greedy_tokenize_with_fallback(
+                            s, tokenizer, old2new, return_original_ids=False
+                        )
+                        return mapped_ids
+                    except ValueError as e:
+                        # greedy_tokenize_with_fallback raises ValueError when a character
+                        # cannot be tokenized at all
+                        raise UnknownTokenError([str(e)])
 
                 def decode(l):
                     # Use a default value strategy to process all tokens.
