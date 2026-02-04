@@ -515,8 +515,23 @@ def cached_generate_text(
         ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
         ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
         
-        # Prepare checkpoint path
-        ckpt_path = out_dir if out_dir.endswith('.pt') else os.path.join(out_dir, 'ckpt.pt')
+        # Prepare checkpoint path - prioritize best checkpoint if available
+        if out_dir.endswith('.pt'):
+            ckpt_path = out_dir
+        else:
+            # Priority order: best_checkpoint/ckpt.pt -> ckpt.pt
+            best_ckpt_path = os.path.join(out_dir, 'best_checkpoint', 'ckpt.pt')
+            regular_ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+            
+            if os.path.exists(best_ckpt_path):
+                ckpt_path = best_ckpt_path
+                print(f"Using best checkpoint: {ckpt_path}")
+            elif os.path.exists(regular_ckpt_path):
+                ckpt_path = regular_ckpt_path
+                print(f"Using checkpoint: {ckpt_path}")
+            else:
+                ckpt_path = regular_ckpt_path  # Will fail below with proper error message
+        
         if not os.path.exists(ckpt_path):
             err_msg = f"Error: checkpoint not found at {ckpt_path}."
             if return_detailed_info:

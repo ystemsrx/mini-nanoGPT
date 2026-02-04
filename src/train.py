@@ -287,6 +287,7 @@ def train_model_generator(
 
     iter_num = 0
     best_val_loss = 1e9 # Initialize with a large value
+    best_train_loss = 1e9 # Initialize with a large value for training loss tracking
 
     if num_eval_seeds > 0: # Evaluation mode
         if use_self_attention:
@@ -349,6 +350,7 @@ def train_model_generator(
         model.load_state_dict(state_dict)
         iter_num = checkpoint['iter_num']
         best_val_loss = checkpoint['best_val_loss']
+        best_train_loss = checkpoint.get('best_train_loss', 1e9) # Load best_train_loss if exists
         # Load previous plot data
         if os.path.exists(loss_log_path):
             with open(loss_log_path, 'rb') as f:
@@ -525,7 +527,8 @@ def train_model_generator(
                 # Save final checkpoint and logs
                 ckpt = {
                     'model': raw_model.state_dict(), 'optimizer': optimizer.state_dict(),
-                    'model_args': model_args, 'iter_num': iter_num, 'best_val_loss': best_val_loss
+                    'model_args': model_args, 'iter_num': iter_num, 'best_val_loss': best_val_loss,
+                    'best_train_loss': best_train_loss
                 }
                 final_ckpt_path = os.path.join(out_dir, 'ckpt.pt')
                 torch.save(ckpt, final_ckpt_path)
@@ -586,7 +589,8 @@ def train_model_generator(
             save_path_step = os.path.join(save_dir_step, 'ckpt.pt')
             ckpt_step = {
                 'model': raw_model.state_dict(), 'optimizer': optimizer.state_dict(),
-                'model_args': model_args, 'iter_num': iter_num, 'best_val_loss': best_val_loss
+                'model_args': model_args, 'iter_num': iter_num, 'best_val_loss': best_val_loss,
+                'best_train_loss': best_train_loss
             }
             torch.save(ckpt_step, save_path_step)
             print(f"Intermediate checkpoint saved at step {iter_num + 1}: {save_path_step}")
@@ -609,6 +613,21 @@ def train_model_generator(
                 train_plot_steps.append(iter_num)
                 train_plot_losses.append(train_loss_val)
                 
+                # If no validation set, save best checkpoint based on training loss
+                if not has_val and save_best_val_checkpoint:
+                    if train_loss_val < best_train_loss:
+                        best_train_loss = train_loss_val
+                        best_ckpt_dir = os.path.join(out_dir, "best_checkpoint")
+                        os.makedirs(best_ckpt_dir, exist_ok=True)
+                        best_ckpt_path = os.path.join(best_ckpt_dir, "ckpt.pt")
+                        ckpt_best_train = {
+                            'model': raw_model.state_dict(), 'optimizer': optimizer.state_dict(),
+                            'model_args': model_args, 'iter_num': iter_num, 'best_val_loss': best_val_loss,
+                            'best_train_loss': best_train_loss
+                        }
+                        torch.save(ckpt_best_train, best_ckpt_path)
+                        print(f"New best train_loss={best_train_loss:.4f} at step {iter_num}, checkpoint saved.")
+                
                 current_val_loss_for_plot = None
                 if has_val:
                     model.eval() # Switch to eval mode for validation
@@ -628,7 +647,8 @@ def train_model_generator(
                             best_ckpt_path = os.path.join(best_ckpt_dir, "ckpt.pt")
                             ckpt_best = {
                                 'model': raw_model.state_dict(), 'optimizer': optimizer.state_dict(),
-                                'model_args': model_args, 'iter_num': iter_num, 'best_val_loss': best_val_loss
+                                'model_args': model_args, 'iter_num': iter_num, 'best_val_loss': best_val_loss,
+                                'best_train_loss': best_train_loss
                             }
                             torch.save(ckpt_best, best_ckpt_path)
                             print(f"New best val_loss={best_val_loss:.4f} at step {iter_num}, checkpoint saved.")
@@ -667,7 +687,8 @@ def train_model_generator(
                 # Save final checkpoint
                 ckpt_final = {
                     'model': raw_model.state_dict(), 'optimizer': optimizer.state_dict(),
-                    'model_args': model_args, 'iter_num': iter_num, 'best_val_loss': best_val_loss
+                    'model_args': model_args, 'iter_num': iter_num, 'best_val_loss': best_val_loss,
+                    'best_train_loss': best_train_loss
                 }
                 torch.save(ckpt_final, os.path.join(out_dir, 'ckpt.pt'))
                 # Ensure loss log is saved one last time

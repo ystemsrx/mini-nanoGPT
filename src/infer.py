@@ -52,11 +52,26 @@ def generate_text(
 ):
     """
     Generates text from a single checkpoint and writes inference configuration/history to the database.
-    If out_dir ends with .pt, it's treated as the checkpoint path; otherwise, out_dir/ckpt.pt is assumed.
+    If out_dir ends with .pt, it's treated as the checkpoint path; otherwise, prioritize best_checkpoint/ckpt.pt, then ckpt.pt.
     """
     # Database: ensure model_id & record config
     # DB Integration
-    ckpt_dir = out_dir if out_dir.endswith('.pt') else os.path.join(out_dir, 'ckpt.pt')
+    # Determine checkpoint path - prioritize best checkpoint if available
+    if out_dir.endswith('.pt'):
+        ckpt_dir = out_dir
+    else:
+        best_ckpt_path = os.path.join(out_dir, 'best_checkpoint', 'ckpt.pt')
+        regular_ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+        
+        if os.path.exists(best_ckpt_path):
+            ckpt_dir = best_ckpt_path
+            print(f"Using best checkpoint: {ckpt_dir}")
+        elif os.path.exists(regular_ckpt_path):
+            ckpt_dir = regular_ckpt_path
+            print(f"Using checkpoint: {ckpt_dir}")
+        else:
+            ckpt_dir = regular_ckpt_path  # Will fail later with proper error message
+    
     model_dir_for_db = os.path.dirname(ckpt_dir)  # Use directory to locate the model
     model_name_for_db = os.path.basename(model_dir_for_db) or "new_model"
     model_id = dbm.get_model_id_by_dir(model_dir_for_db)

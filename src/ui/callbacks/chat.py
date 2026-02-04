@@ -45,11 +45,26 @@ def chat_cb(user_msg, history, model_sel, sys_prompt, max_tokens, temp, top_k, s
         return
 
     try:
-        ckpt_path = os.path.join(model_info["out_dir"], "ckpt.pt")
-        sft_ckpt_path = os.path.join(model_info["out_dir"], "sft", "ckpt_sft.pt")
+        out_dir = model_info["out_dir"]
+        sft_dir = os.path.join(out_dir, "sft")
+        
+        # SFT checkpoint paths - chat mode requires SFT model only
+        sft_best_ckpt_path = os.path.join(sft_dir, "ckpt_sft.pt")      # SFT best checkpoint
+        sft_last_ckpt_path = os.path.join(sft_dir, "ckpt_sft_last.pt") # SFT last checkpoint
 
-        # Prefer SFT checkpoint if available
-        load_path = sft_ckpt_path if os.path.exists(sft_ckpt_path) else ckpt_path
+        # Priority order: SFT best checkpoint -> SFT last checkpoint -> Error
+        if os.path.exists(sft_best_ckpt_path):
+            load_path = sft_best_ckpt_path
+            print(f"Chat mode: Using SFT best checkpoint: {load_path}")
+        elif os.path.exists(sft_last_ckpt_path):
+            load_path = sft_last_ckpt_path
+            print(f"Chat mode: Using SFT last checkpoint: {load_path}")
+        else:
+            # No SFT model found - show error
+            history[-1] = {"role": "user", "content": user_msg}
+            history.append({"role": "assistant", "content": f"❌ SFT model not found. Please run SFT training first.\n\nExpected paths:\n- {sft_best_ckpt_path}\n- {sft_last_ckpt_path}"})
+            yield "", history, ""
+            return
 
         # Check for tokenizer
         tokenizer_path = Path.cwd() / "assets" / "tokenizer.json"
