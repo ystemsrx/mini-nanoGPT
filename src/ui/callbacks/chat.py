@@ -13,6 +13,7 @@ from src.ui.html_render import (
     _generate_response_html_with_tokens,
     _generate_chat_advanced_html,
 )
+from src.ui.helpers import _normalize_chat_history
 from src.ui.state import dbm
 
 
@@ -25,7 +26,7 @@ def chat_cb(user_msg, history, model_sel, sys_prompt, max_tokens, temp, top_k, s
         return "", history or [], ""
 
     # Update history with user message
-    history = history or []
+    history = _normalize_chat_history(history)
     history.append({"role": "user", "content": user_msg})
     yield "", history, ""
 

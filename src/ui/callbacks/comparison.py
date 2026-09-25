@@ -16,7 +16,7 @@ from src.gpt_self_attn import GPTSelfAttnConfig, GPTSelfAttn
 from src.infer_cache import cached_generate_text, ModelCache, UnknownTokenError, stop_inference
 from src.sft import chat_generate, tokenize_user_input, stop_chat_generation
 from src.ui.charts import generate_loss_chart_html
-from src.ui.helpers import _create_plot_html_from_log
+from src.ui.helpers import _create_plot_html_from_log, _normalize_chat_history
 from src.ui.html_render import (
     _escape_html,
     _generate_token_html,
@@ -697,8 +697,8 @@ def dual_chat_cb(
         gr.Warning("⚠️ Please enter a message.")
         return "", left_history or [], right_history or []
 
-    left_history = left_history or []
-    right_history = right_history or []
+    left_history = _normalize_chat_history(left_history)
+    right_history = _normalize_chat_history(right_history)
 
     if not left_model_sel or " - " not in left_model_sel or not right_model_sel or " - " not in right_model_sel:
         left_history.append({"role": "assistant", "content": "❌ Please select two models first."})

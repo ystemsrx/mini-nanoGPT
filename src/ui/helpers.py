@@ -39,6 +39,29 @@ def _match_device_value(config_device: str, available_devices: list) -> str:
     return available_devices[0] if available_devices else "cpu"
 
 
+def _normalize_chat_history(history):
+    """
+    Convert Gradio Chatbot history into plain {"role", "content": str} dicts.
+
+    Gradio 6+ passes message content as a list of content blocks
+    (e.g. [{"type": "text", "text": "..."}]) instead of a plain string.
+    """
+    normalized = []
+    for msg in history or []:
+        if not isinstance(msg, dict):
+            normalized.append(msg)
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            content = "".join(
+                block.get("text", "") if isinstance(block, dict) else str(block) for block in content
+            )
+        elif isinstance(content, dict):
+            content = content.get("text", "")
+        normalized.append({"role": msg.get("role", "user"), "content": content})
+    return normalized
+
+
 def _get_model_choices_list():
     return [f"{m['id']} - {m['name']}" for m in dbm.get_all_models()]
 
