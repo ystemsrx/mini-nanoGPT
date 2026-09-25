@@ -29,7 +29,7 @@ def build_app_interface(selected_lang: str = "zh"):
 
     T = LANG_JSON[selected_lang]
 
-    with gr.Blocks(title=T["app_title"], css=CUSTOM_CSS) as demo:
+    with gr.Blocks(title=T["app_title"]) as demo:
 
         # ========= Top: language ========= #
         lang_select = gr.Dropdown(
@@ -610,7 +610,6 @@ def build_app_interface(selected_lang: str = "zh"):
                         label=T["inf_chat_history"],
                         height=400,
                         sanitize_html=False,
-                        type="messages",
                     )
                     inf_system_prompt = gr.Textbox(
                         label=T["inf_system_prompt"],
@@ -779,13 +778,11 @@ def build_app_interface(selected_lang: str = "zh"):
                             label=T["compare_left_output"],
                             height=350,
                             sanitize_html=False,
-                            type="messages",
                         )
                         comp_right_chatbot = gr.Chatbot(
                             label=T["compare_right_output"],
                             height=350,
                             sanitize_html=False,
-                            type="messages",
                         )
                     comp_system_prompt = gr.Textbox(
                         label=T["inf_system_prompt"],
@@ -1329,4 +1326,4 @@ def build_app_interface(selected_lang: str = "zh"):
 # ----------------- Launch -------------------
 if __name__ == "__main__":
     app = build_app_interface()
-    app.launch(server_name="0.0.0.0", server_port=7860, share=False)
+    app.launch(server_name="0.0.0.0", server_port=7860, share=False, css=CUSTOM_CSS)
