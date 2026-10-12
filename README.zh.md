@@ -121,13 +121,37 @@ docker run --gpus all -p 7860:7860 -v $(pwd)/data:/app/data mini-nanogpt
 # 克隆仓库
 git clone --depth 1 https://github.com/ystemsrx/mini-nanoGPT.git
 cd mini-nanoGPT
-
-# 安装依赖（Python 3.7+）
-pip install -r requirements.txt
-
-# 启动项目
-python app.py
 ```
+
+在项目目录中创建虚拟环境，隔离项目依赖。
+
+**Windows（PowerShell）：**
+
+```powershell
+# 创建并激活虚拟环境
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# 使用虚拟环境中的 Python 安装依赖并启动项目
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe app.py
+```
+
+如果 PowerShell 阻止运行 `Activate.ps1`，可以跳过激活，直接使用上面的 Python 路径。也可以运行 `.\run.bat`，自动创建或复用 `.venv`、安装依赖并启动项目。
+
+**Linux / macOS（bash 或 zsh）：**
+
+```bash
+# 创建并激活虚拟环境
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 使用虚拟环境中的 Python 安装依赖并启动项目
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python app.py
+```
+
+如果 `python3 -m venv` 提示缺少 venv 支持，请先安装发行版提供的 Python venv 软件包（例如 Debian/Ubuntu 的 `python3-venv`），再重试。每次打开新终端后需要重新激活 `.venv`；使用完毕后可运行 `deactivate` 退出。
 
 打开浏览器访问 **http://localhost:7860**，就能看到训练界面了！
 

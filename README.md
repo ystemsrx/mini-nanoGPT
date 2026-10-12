@@ -121,13 +121,37 @@ For more details, please refer to [Docker Setup](docker/README.md).
 # Clone the repository
 git clone --depth 1 https://github.com/ystemsrx/mini-nanoGPT.git
 cd mini-nanoGPT
-
-# Install dependencies (Python 3.7+)
-pip install -r requirements.txt
-
-# Launch the app
-python app.py
 ```
+
+Create a virtual environment in the project directory to keep dependencies isolated.
+
+**Windows (PowerShell):**
+
+```powershell
+# Create and activate the virtual environment
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# Install dependencies and launch using the virtual environment's Python
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe app.py
+```
+
+If PowerShell blocks `Activate.ps1`, skip activation and use the explicit Python paths above. You can also run `.\run.bat`, which creates or reuses `.venv`, installs dependencies, and launches the app automatically.
+
+**Linux / macOS (bash or zsh):**
+
+```bash
+# Create and activate the virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies and launch using the virtual environment's Python
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python app.py
+```
+
+If `python3 -m venv` reports that venv support is missing, install your distribution's Python venv package (for example, `python3-venv` on Debian/Ubuntu) and try again. Activate `.venv` again in each new terminal, and run `deactivate` when finished.
 
 Open **http://localhost:7860** in your browser to see the training interface!
 
